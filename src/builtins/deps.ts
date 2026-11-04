@@ -16,6 +16,8 @@ import type { ImportRef } from "./imports.js";
 
 const DAY = 86_400_000;
 const PUBLIC_LOOKUP_CAP = 200;
+const VI_BURST = 15;
+const VI_INTERVAL_MS = 1200;
 
 export interface NetCtx {
   http: Http;
@@ -163,35 +165,37 @@ export async function depsBuiltins(ctx: BuiltinCtx, d: DepsInput): Promise<DepsO
     });
     for (const p of pkgs) p.vulns = p.ids.map((v) => details.get(v.id)).filter((x): x is Detail => !!x);
 
-    // Priority enrichment (§8-4/§8-5): highest OSV severity first, capped per scan.
+    // Priority enrichment (§8-4/§8-5): most severe IDs first across all packages, capped per
+    // scan, paced to ~50/min after a short burst (the server's per-IP limit allows a burst of 20).
     if (net.vulnintel) {
-      const order = [...pkgs].sort((a, b) => sevRank(osvSeverity(a)) - sevRank(osvSeverity(b)));
+      const queue = pkgs
+        .flatMap((p) => p.vulns.map((v) => ({ p, v, s: vulnSeverity({ ...v, vi: undefined }) })))
+        .sort((a, b) => sevRank(a.s.sev) - sevRank(b.s.sev) || (b.v.cvss ?? 0) - (a.v.cvss ?? 0));
       let calls = 0;
       let stop = false;
-      for (const p of order) {
-        for (const v of p.vulns) {
-          const id = v.aliases.find((a) => a.startsWith("CVE-")) ?? v.id;
-          const key = `${id}:${net.lang}`;
-          const hit = net.caches.vi.get<ViInfo | null>(key, DAY, d.now);
-          if (hit !== undefined) {
-            v.vi = hit ?? undefined;
-            continue;
-          }
-          if (stop || calls >= PUBLIC_LOOKUP_CAP) {
-            p.pending = true;
-            continue;
-          }
-          calls++;
-          const r = await publicLookup(net.http, net.budget, id, net.lang);
-          if (r.ok) {
-            v.vi = { kev: r.value.is_kev, vpi: r.value.vpi_level, epss: r.value.epss, cvss: r.value.cvss };
-            net.caches.vi.set(key, v.vi, d.now);
-          } else if (r.reason === "not_found") net.caches.vi.set(key, null, d.now);
-          else if (r.reason === "budget") p.pending = true;
-          else {
-            p.failed = true;
-            if (r.reason === "rate_limited" || r.reason === "offline") stop = true;
-          }
+      for (const { p, v } of queue) {
+        const id = v.aliases.find((a) => a.startsWith("CVE-")) ?? v.id;
+        const key = `${id}:${net.lang}`;
+        const hit = net.caches.vi.get<ViInfo | null>(key, DAY, d.now);
+        if (hit !== undefined) {
+          v.vi = hit ?? undefined;
+          continue;
+        }
+        if (stop || calls >= PUBLIC_LOOKUP_CAP) {
+          p.pending = true;
+          continue;
+        }
+        if (calls >= VI_BURST) await net.http.sleep(VI_INTERVAL_MS);
+        calls++;
+        const r = await publicLookup(net.http, net.budget, id, net.lang);
+        if (r.ok) {
+          v.vi = { kev: r.value.is_kev, vpi: r.value.vpi_level, epss: r.value.epss, cvss: r.value.cvss };
+          net.caches.vi.set(key, v.vi, d.now);
+        } else if (r.reason === "not_found") net.caches.vi.set(key, null, d.now);
+        else if (r.reason === "budget") p.pending = true;
+        else {
+          p.failed = true;
+          if (r.reason === "rate_limited" || r.reason === "offline") stop = true;
         }
       }
     }
@@ -241,6 +245,7 @@ export async function depsBuiltins(ctx: BuiltinCtx, d: DepsInput): Promise<DepsO
         }
         if (r.s !== "ok") continue;
         if (l.eco === "npm" && (r.latest === "0.0.1-security" || ls.some((x) => x.version === "0.0.1-security"))) {
+          if (out.some((o) => o.kind === "malicious" && o.extra?.package === l.name && o.extra?.ecosystem === l.eco)) continue; // OSV MAL- already reported
           out.push({ rule: "hallucinated-package", kind: "malicious", severity: "critical", confidence: "confirmed", file: l.file, line, value: `${key}:security`, extra: fields });
           continue;
         }
@@ -340,8 +345,6 @@ function vulnSeverity(v: Detail): { sev: Severity; known: boolean } {
   if (v.osvSeverity === "HIGH" || (cv ?? 0) >= 7) return { sev: "high", known: true };
   return { sev: "medium", known: !!v.osvSeverity || cv !== undefined };
 }
-
-const osvSeverity = (p: VulnPkg): Severity => p.vulns.map((v) => vulnSeverity({ ...v, vi: undefined }).sev).sort((a, b) => sevRank(a) - sevRank(b))[0] ?? "medium";
 
 function vulnFinding(p: VulnPkg): BF {
   const { t } = p;

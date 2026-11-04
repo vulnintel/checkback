@@ -1,4 +1,10 @@
-import { Enums, Models, Serialize, Spec, SPDX } from "@cyclonedx/cyclonedx-library";
+// Subpath imports: the package root also loads the optional JSON-schema validator plugins
+// (ajv-formats-draft2019 → node:punycode deprecation warning in the user's terminal).
+import * as Enums from "@cyclonedx/cyclonedx-library/Enums";
+import * as Models from "@cyclonedx/cyclonedx-library/Models";
+import * as SPDX from "@cyclonedx/cyclonedx-library/SPDX";
+import * as Serialize from "@cyclonedx/cyclonedx-library/Serialize";
+import * as Spec from "@cyclonedx/cyclonedx-library/Spec";
 import type { Inventory } from "./inventory.js";
 import { lookupScope } from "./inventory.js";
 import type { Package } from "./locks.js";

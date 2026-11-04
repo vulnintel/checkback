@@ -171,7 +171,7 @@ describe("AC16 external lookup scope — intercepted requests", () => {
 
 describe("AC17–AC20 hallucinated-package", () => {
   it("AC17: OSV MAL- → critical·confirmed 'malicious', no /v1/vulns detail call", async () => {
-    const net = mockNet({ osv: { "npm:discord-selfbot-v14@1.0.0": ["MAL-2022-2490"] }, npm: { "discord-selfbot-v14": {} } });
+    const net = mockNet({ osv: { "npm:discord-selfbot-v14@1.0.0": ["MAL-2022-2490"] }, npm: { "discord-selfbot-v14": { latest: "0.0.1-security" } } });
     const r = await scanDefault(project({ "package.json": pj({ name: "a", dependencies: { "discord-selfbot-v14": "1.0.0" } }), "package-lock.json": lock({ "discord-selfbot-v14": "1.0.0" }) }), { appDir: await consentedAppDir(), fetch: net.fetch, now });
     expect(byRule(r, "hallucinated-package")).toMatchObject([{ kind: "malicious", severity: "critical", confidence: "confirmed", vuln_ids: ["MAL-2022-2490"] }]);
     expect(net.calls.some((c) => c.url.includes("/v1/vulns/"))).toBe(false);
