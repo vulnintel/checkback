@@ -405,9 +405,10 @@ describe("titles follow the language option", () => {
 });
 
 describe("checked list", () => {
-  it("builtins are registered but not run; git rules skipped outside a repo", async () => {
+  it("builtins run; dependency lookups wait for consent; git rules skipped outside a repo", async () => {
     const r = await scanDefault(project({ "a.txt": "" }));
-    expect(r.checked.find((x) => x.rule_id === "supabase-rls")).toEqual({ rule_id: "supabase-rls", ran: false, reason: "not_implemented" });
+    expect(r.checked.find((x) => x.rule_id === "supabase-rls")).toEqual({ rule_id: "supabase-rls", ran: true });
+    expect(r.checked.find((x) => x.rule_id === "vulnerable-deps")).toEqual({ rule_id: "vulnerable-deps", ran: false, reason: "no_consent" });
     expect(r.checked.find((x) => x.rule_id === "env-committed")).toEqual({ rule_id: "env-committed", ran: false, reason: "not_git_repo" });
     expect(r.checked.some((x) => x.rule_id.startsWith("ai-"))).toBe(false);
     void tempDir;

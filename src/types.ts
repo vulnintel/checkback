@@ -15,7 +15,13 @@ export type NoteCode =
   | "env_reference" // only referenced (no value present)
   | "env_driven" // value injected from environment
   | "hidden_sourcemap" // bundler emits hidden source maps
-  | "dev_build"; // Next.js dev-server output (.next/static/development present), not a deploy artifact
+  | "dev_build" // Next.js dev-server output (.next/static/development present), not a deploy artifact
+  | "dev_dependency" // development dependency
+  | "major_upgrade" // fixed version is a new major — check compatibility
+  | "severity_unknown" // no KEV/VPI/OSV severity/CVSS
+  | "priority_pending" // VulnIntel priority lookup not done yet (budget) — next scan continues from cache
+  | "priority_failed" // VulnIntel lookup failed — sorted by OSV severity
+  | "expired"; // firebase test mode already expired
 
 export interface Location {
   /** CWD-relative path, always "/"-separated. */
@@ -36,9 +42,30 @@ export interface Finding {
   secret_kind?: string;
   /** sha-256 of the matched value (file rules: of file content). Used for recheck pairing. */
   value_hash: string;
-  source: "local";
+  source: "local" | "osv" | "registry" | "vulnintel";
   notes?: NoteCode[];
+  /** Builtin sub-judgment (e.g. "rls_disabled"); texts in builtins/text.ts. */
+  kind?: string;
+  /** Extra CWD-relative paths the finding points to (e.g. SQL to verify, all lockfiles). */
+  related?: string[];
+  ecosystem?: "npm" | "PyPI";
+  package?: string;
+  version?: string | null;
+  fixed_version?: string;
+  vuln_ids?: string[];
+  kev?: boolean;
+  vpi_level?: number;
+  epss?: number;
+  cvss?: number;
+  lockfile?: string;
+  /** Recheck status vs the baseline (§7-8). */
+  recheck?: RecheckStatus;
+  recheck_note?: string;
+  /** A baseline finding carried into this result (not found now, but not resolved: lock mismatch / not checked). */
+  carried?: boolean;
 }
+
+export type RecheckStatus = "resolved" | "remaining" | "new" | "same_key" | "moved" | "downgraded" | "lock_mismatch" | "not_checked";
 
 export interface CheckedRule {
   rule_id: string;
@@ -48,7 +75,10 @@ export interface CheckedRule {
     | "not_git_repo"
     | "not_implemented" // builtin — runs from stage 4
     | "timeout" // per-rule budget exceeded — partial results
-    | "timeout_partial"; // some files timed out
+    | "timeout_partial" // some files timed out
+    | "no_consent" // external lookups need first-run consent
+    | "external_disabled" // the needed external lookup is turned off
+    | "offline"; // external lookup failed (offline / service error)
 }
 
 export interface ScanStats {

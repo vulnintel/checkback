@@ -1,8 +1,15 @@
-import { createHash } from "node:crypto";
+import { createHmac } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { readFile, realpath, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { defaultAppDir } from "./appdata.js";
+import { apiKeyOf, defaultAppDir, hasConsent, installKey, readConfig, type LocalConfig } from "./appdata.js";
+import { firebaseRules, supabaseRls, type BF, type BuiltinCtx } from "./builtins/backend.js";
+import { depsBuiltins, type NetCtx } from "./builtins/deps.js";
+import { jsImports, pyImports } from "./builtins/imports.js";
+import { BUILTIN_NAMES, KIND_TEXT } from "./builtins/text.js";
+import { lookupScope, readInventory } from "./deps/inventory.js";
+import { ViBudget } from "./net/budget.js";
+import { Cache, defaultHttp, VERSION, type Fetch } from "./net/http.js";
 import { configValue, parseConfig, parseDotenv } from "./config-file.js";
 import {
   collectFiles, decode, isEnvFile, MAX_FILE_BYTES, isExampleOrDoc, isSkippedPath, isTestPath, lineAt, lineTextAt, readText, type FileEntry,
@@ -12,12 +19,12 @@ import { matchAny, matchGlob } from "./glob.js";
 import { listIgnores } from "./ignores.js";
 import { envHasOnlyPublicValues, hiddenSourcemapConfig, LATE_RULES, REFINERS } from "./refine.js";
 import { RegexRunner, RULE_TOTAL_LIMIT_MS, type RawMatch } from "./regex-runner.js";
-import { allowlisted, decodeJwtPayload, fingerprint, isPlaceholder, mask, sha256 } from "./secrets.js";
+import { allowlisted, decodeJwtPayload, fingerprint, isPlaceholder, mask } from "./secrets.js";
 import type {
-  CheckedRule, Confidence, ConfigRule, FileRule, Finding, Lang, NoteCode, PatternRule, Rule, ScanResult, ScanStats, Severity, Template,
+  BuiltinRule, CheckedRule, Confidence, ConfigRule, FileRule, Finding, Lang, NoteCode, PatternRule, Rule, ScanResult, ScanStats, Severity, Template,
 } from "./types.js";
 
-export const ENGINE_VERSION = "0.0.0";
+export const ENGINE_VERSION = VERSION;
 
 export interface ScanOptions {
   /** Language of finding titles. Default "en". */
@@ -26,6 +33,10 @@ export interface ScanOptions {
   appDir?: string;
   /** Apply the local ignore list. Default true. */
   ignores?: boolean;
+  /** Injected fetch (tests/mocks). External calls still need consent and enabled lookups. */
+  fetch?: Fetch;
+  /** Injected clock (ms). */
+  now?: () => number;
 }
 
 const CONF_RANK: Record<Confidence, number> = { confirmed: 0, review: 1, info: 2 };
@@ -42,20 +53,25 @@ const applies = (r: { files: string[]; exclude: string[]; build_output?: boolean
 const literalPath = (glob: string | undefined): string | null => (glob && !/[*?[{]/.test(glob) ? glob : null);
 
 /**
- * Stage-1 scan of `cwd` (fixed target, spec §3) with `template`. Local only — no network.
- * Builtin rules are registered but reported as not run until stage 4.
+ * Stage-1 scan of `cwd` (fixed target, spec §3) with `template`. Network only for the builtin
+ * dependency checks, only after first-run consent, only to the §3-1 services.
  */
 export async function scan(cwd: string, template: Template, opts: ScanOptions = {}): Promise<ScanResult> {
   const root = await realpath(resolve(cwd));
+  const appDir = opts.appDir ?? defaultAppDir();
+  const cfg = await readConfig(appDir);
   const files = await collectFiles(root);
-  const run = new Run(root, files, await gitInfo(root), opts.lang ?? "en");
+  const run = new Run(root, files, await gitInfo(root), opts.lang ?? cfg.lang ?? "en", await installKey(appDir));
 
   const active: Rule[] = [];
+  const builtins: BuiltinRule[] = [];
   for (const r of template.rules) {
     if (r.type === "ai_check") continue; // natural-language checks for the user's AI only
     if (!r.enabled) run.checked.set(r.id, { rule_id: r.id, ran: false, reason: "disabled" });
-    else if (r.type === "builtin") run.checked.set(r.id, { rule_id: r.id, ran: false, reason: "not_implemented" });
-    else if (r.type === "file" && r.git === "tracked" && !run.git.isRepo) run.checked.set(r.id, { rule_id: r.id, ran: false, reason: "not_git_repo" });
+    else if (r.type === "builtin") {
+      run.checked.set(r.id, { rule_id: r.id, ran: true });
+      builtins.push(r);
+    } else if (r.type === "file" && r.git === "tracked" && !run.git.isRepo) run.checked.set(r.id, { rule_id: r.id, ran: false, reason: "not_git_repo" });
     else {
       run.checked.set(r.id, { rule_id: r.id, ran: true });
       if (!r.when || files.some((f) => !f.build && matchGlob(r.when!, f.rel))) active.push(r);
@@ -66,10 +82,11 @@ export async function scan(cwd: string, template: Template, opts: ScanOptions = 
     active.filter((r): r is ConfigRule => r.type === "config"),
   );
   for (const r of active) if (r.type === "file") await run.fileRule(r);
+  await run.builtins(builtins, { cfg, appDir, fetch: opts.fetch, now: (opts.now ?? Date.now)() });
 
   let findings = run.finish();
   if (opts.ignores !== false) {
-    const ignored = new Set((await listIgnores(root, opts.appDir ?? defaultAppDir())).map((e) => e.id));
+    const ignored = new Set((await listIgnores(root, appDir)).map((e) => e.id));
     const before = findings.length;
     findings = findings.filter((f) => !ignored.has(f.id));
     run.stats.ignored = before - findings.length;
@@ -84,7 +101,8 @@ export async function scan(cwd: string, template: Template, opts: ScanOptions = 
 }
 
 interface AddArgs {
-  rule: Exclude<Rule, { type: "builtin" | "ai_check" }>;
+  ruleId: string;
+  title: string;
   file: string | null;
   line: number | null;
   valueHash: string;
@@ -94,6 +112,8 @@ interface AddArgs {
   masked?: string;
   secret?: boolean;
   build?: boolean;
+  kind?: string;
+  extra?: Partial<Finding>;
 }
 
 class Run {
@@ -114,8 +134,18 @@ class Run {
     readonly files: FileEntry[],
     readonly git: GitInfo,
     readonly lang: Lang,
+    private readonly key: Buffer,
   ) {
     this.stats.files = files.length;
+  }
+
+  /** Keyed value hash (per-install HMAC-SHA256): stable for recheck pairing, not brute-forceable offline. */
+  hv(value: string | Uint8Array): string {
+    return createHmac("sha256", this.key).update(value).digest("hex");
+  }
+
+  private title(name: { ko?: string; en?: string } | undefined, fallback: string): string {
+    return name?.[this.lang] ?? name?.en ?? name?.ko ?? fallback;
   }
 
   async textRules(patterns: PatternRule[], configs: ConfigRule[]): Promise<void> {
@@ -184,7 +214,7 @@ class Run {
       if (rule.mode === "require" && !requireHit.has(k) && !over.has(k) && !partial.has(k)) {
         if (rule.id === "gitignore-env-missing" && envIgnored) return;
         this.add({
-          rule, file: requireSeen.get(k) ?? literalPath(rule.files[0]), line: null, valueHash: sha256(""),
+          ruleId: rule.id, title: this.title(rule.name, rule.id), file: requireSeen.get(k) ?? literalPath(rule.files[0]), line: null, valueHash: this.hv(""),
           severity: rule.severity, confidence: "confirmed", notes: [],
         });
       }
@@ -230,7 +260,7 @@ class Run {
     confidence = await this.adjustByPath(f.rel, confidence, secret ? (isLate ? "late" : "value") : "other", notes);
     if (secret && !isLate) occupied.add(line);
     this.add({
-      rule, file: f.rel, line, valueHash: sha256(value), severity, confidence, notes, masked: mask(value), secret, build: f.build,
+      ruleId: rule.id, title: this.title(rule.name, rule.id), file: f.rel, line, valueHash: this.hv(value), severity, confidence, notes, masked: mask(value), secret, build: f.build,
     });
   }
 
@@ -256,7 +286,7 @@ class Run {
     confidence = await this.adjustByPath(f.rel, confidence, "other", notes);
     const value = `${rule.key}=${sv}`;
     this.add({
-      rule, file: f.rel, line: idx >= 0 ? idx + 1 : null, valueHash: sha256(value), severity: rule.severity, confidence, notes, masked: mask(value),
+      ruleId: rule.id, title: this.title(rule.name, rule.id), file: f.rel, line: idx >= 0 ? idx + 1 : null, valueHash: this.hv(value), severity: rule.severity, confidence, notes, masked: mask(value),
     });
   }
 
@@ -275,7 +305,7 @@ class Run {
     if (rule.expect === "present") {
       if (paths.length === 0) {
         this.add({
-          rule, file: literalPath(rule.files[0]), line: null, valueHash: sha256(""), severity: rule.severity, confidence: "confirmed", notes: [],
+          ruleId: rule.id, title: this.title(rule.name, rule.id), file: literalPath(rule.files[0]), line: null, valueHash: this.hv(""), severity: rule.severity, confidence: "confirmed", notes: [],
         });
       }
       return;
@@ -287,11 +317,11 @@ class Run {
       let valueHash: string;
       let content: Buffer | null = null;
       if (onDisk.has(p)) {
-        valueHash = await hashFile(join(this.root, p));
+        valueHash = await this.hashFile(join(this.root, p));
         if (rule.content_check) content = await readTextBuffer(join(this.root, p));
       } else {
         content = await this.git.lastHistoryContent(p);
-        valueHash = sha256(content ?? "");
+        valueHash = this.hv(content ?? "");
       }
       if (rule.git === "tracked" && !this.git.tracked.has(p)) notes.push("history_only");
       if (rule.content_check && content) {
@@ -316,7 +346,7 @@ class Run {
         confidence = "review";
         notes.push("test_path");
       }
-      this.add({ rule, file: p, line: null, valueHash, severity: rule.severity, confidence, notes });
+      this.add({ ruleId: rule.id, title: this.title(rule.name, rule.id), file: p, line: null, valueHash, severity: rule.severity, confidence, notes });
     }
   }
 
@@ -363,25 +393,127 @@ class Run {
   }
 
   add(a: AddArgs): void {
-    const id = fingerprint(a.rule.id, a.file ?? "", a.valueHash);
+    const id = fingerprint(a.ruleId, a.file ?? "", a.valueHash);
     const prev = this.findings.get(id);
     if (prev && (prev.location?.line ?? 0) <= (a.line ?? 0)) return; // keep the first occurrence
-    const name = a.rule.name;
     this.findings.set(id, {
       id,
-      rule_id: a.rule.id,
+      rule_id: a.ruleId,
       severity: a.severity,
       confidence: a.confidence,
-      title: name?.[this.lang] ?? name?.en ?? name?.ko ?? a.rule.id,
+      title: a.title,
       location: a.file === null ? null : { file: a.file, line: a.line },
       ...(a.masked !== undefined && { masked_match: a.masked }),
-      ...(a.secret && { secret_kind: a.rule.id }),
+      ...(a.secret && { secret_kind: a.ruleId }),
       value_hash: a.valueHash,
       source: "local",
       ...(a.notes.length && { notes: [...new Set(a.notes)] }),
+      ...(a.kind && { kind: a.kind }),
+      ...a.extra,
     });
     if (a.build) this.buildIds.add(id);
     else this.buildIds.delete(id);
+  }
+
+  hashFile(abs: string): Promise<string> {
+    return new Promise((res) => {
+      const h = createHmac("sha256", this.key);
+      createReadStream(abs)
+        .on("data", (c) => h.update(c))
+        .on("end", () => res(h.digest("hex")))
+        .on("error", () => res(this.hv("")));
+    });
+  }
+
+  /** Stage-4 builtins (§7-1~7-3). External lookups only after consent (§3-1). */
+  async builtins(rules: BuiltinRule[], o: { cfg: LocalConfig; appDir: string; fetch?: Fetch; now: number }): Promise<void> {
+    if (rules.length === 0) return;
+    const on = (id: string): BuiltinRule | undefined => rules.find((r) => r.id === id);
+    const texts = new Map<string, Promise<string | null>>();
+    const byRel = new Map(this.files.map((f) => [f.rel, f]));
+    const text = (rel: string): Promise<string | null> => {
+      let t = texts.get(rel);
+      if (!t) {
+        const f = byRel.get(rel);
+        t = f ? readText(f.abs).then((r) => ("text" in r ? r.text : null)) : Promise.resolve(null);
+        texts.set(rel, t);
+      }
+      return t;
+    };
+    const inv = await readInventory(this.root, this.files);
+    const ctx: BuiltinCtx = {
+      files: this.files,
+      text,
+      findings: [...this.findings.values()],
+      now: o.now,
+      npmDeps: new Set(inv.manifests.flatMap((m) => (m.ecosystem === "npm" ? m.deps.map((d) => d.name) : []))),
+    };
+    const out: BF[] = [];
+    if (on("supabase-rls")) out.push(...(await supabaseRls(ctx)));
+    if (on("firebase-rules")) out.push(...(await firebaseRules(ctx)));
+    const vuln = on("vulnerable-deps");
+    const hall = on("hallucinated-package");
+    if (vuln || hall) {
+      const priv = inv.privateConfig;
+      const workspace = new Set(inv.manifests.flatMap((m) => (m.name ? [m.name] : [])));
+      // Import names go through the same private-registry exclusions as manifest names (§7-2).
+      const imports = hall
+        ? [...(await jsImports(this.files, text, workspace)), ...(await pyImports(this.files, text))].filter(
+            (i) => !priv.allPrivate.includes(i.ecosystem) && !(i.name.startsWith("@") && priv.npmScopes.includes(i.name.split("/")[0]!.toLowerCase())),
+          )
+        : [];
+      const ext = o.cfg.external ?? {};
+      let net: NetCtx | null = null;
+      if (hasConsent(o.cfg)) {
+        net = {
+          http: defaultHttp(o.fetch),
+          budget: new ViBudget(o.appDir, { keyMode: !!apiKeyOf(o.cfg) }),
+          lang: this.lang,
+          osv: ext.osv !== false,
+          registry: ext.registry !== false,
+          vulnintel: ext.vulnintel !== false,
+          caches: {
+            registry: await Cache.open(o.appDir, "registry"),
+            osv: await Cache.open(o.appDir, "osv"),
+            vi: await Cache.open(o.appDir, "vulnintel"),
+          },
+        };
+      }
+      const r = await depsBuiltins(ctx, {
+        inv,
+        scope: lookupScope(inv),
+        imports,
+        text,
+        vuln: !!vuln,
+        hall: !!hall,
+        params: (hall?.params ?? {}) as { allow?: string[]; min_weekly_downloads?: number },
+        net,
+        now: o.now,
+      });
+      out.push(...r.findings);
+      if (vuln && r.vuln) this.checked.set(vuln.id, { rule_id: vuln.id, ran: false, reason: r.vuln });
+      if (hall && r.hall) this.checked.set(hall.id, { rule_id: hall.id, ran: false, reason: r.hall });
+      if (net) {
+        await net.caches.registry.save(86_400_000, o.now);
+        await net.caches.osv.save(7 * 86_400_000, o.now);
+        await net.caches.vi.save(86_400_000, o.now);
+      }
+    }
+    for (const b of out) {
+      const t = KIND_TEXT[`${b.rule}/${b.kind}`];
+      this.add({
+        ruleId: b.rule,
+        title: this.title(t?.title ?? BUILTIN_NAMES[b.rule], b.rule),
+        file: b.file,
+        line: b.line,
+        valueHash: this.hv(b.value),
+        severity: on(b.rule)?.severity ?? b.severity,
+        confidence: b.confidence,
+        notes: b.notes ?? [],
+        kind: b.kind,
+        ...(b.extra && { extra: b.extra }),
+      });
+    }
   }
 
   finish(): Finding[] {
@@ -400,22 +532,16 @@ class Run {
       (a, b) =>
         CONF_RANK[a.confidence] - CONF_RANK[b.confidence] ||
         SEV_RANK[a.severity] - SEV_RANK[b.severity] ||
+        Number(b.kev ?? false) - Number(a.kev ?? false) ||
+        (b.vpi_level ?? 0) - (a.vpi_level ?? 0) ||
+        (b.epss ?? 0) - (a.epss ?? 0) ||
+        (b.cvss ?? 0) - (a.cvss ?? 0) ||
         cmp(a.location?.file ?? "", b.location?.file ?? "") ||
         (a.location?.line ?? 0) - (b.location?.line ?? 0) ||
         cmp(a.rule_id, b.rule_id) ||
         cmp(a.id, b.id),
     );
   }
-}
-
-function hashFile(abs: string): Promise<string> {
-  return new Promise((res) => {
-    const h = createHash("sha256");
-    createReadStream(abs)
-      .on("data", (c) => h.update(c))
-      .on("end", () => res(h.digest("hex")))
-      .on("error", () => res(sha256("")));
-  });
 }
 
 async function readTextBuffer(abs: string): Promise<Buffer | null> {

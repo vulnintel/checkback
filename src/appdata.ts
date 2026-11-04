@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -29,4 +30,53 @@ export async function writeJson(file: string, data: unknown): Promise<void> {
   const tmp = `${file}.${process.pid}.tmp`;
   await writeFile(tmp, JSON.stringify(data, null, 2), { mode: 0o600 });
   await rename(tmp, file);
+}
+
+export const CONSENT_VERSION = 1;
+
+/** `<appdata>/checkback/config.json` — shared by GUI, MCP and CLI. Written with mode 600. */
+export interface LocalConfig {
+  consent?: { at: string; version: number };
+  lang?: "ko" | "en";
+  /** External lookups, each on by default once consent is given (§3-1). */
+  external?: { osv?: boolean; registry?: boolean; vulnintel?: boolean };
+  api_key?: string;
+}
+
+export async function readConfig(appDir: string): Promise<LocalConfig> {
+  const c = await readJson<unknown>(join(appDir, "config.json"), {});
+  return typeof c === "object" && c !== null ? (c as LocalConfig) : {};
+}
+
+export async function updateConfig(appDir: string, patch: Partial<LocalConfig>): Promise<LocalConfig> {
+  const next = { ...(await readConfig(appDir)), ...patch };
+  await writeJson(join(appDir, "config.json"), next);
+  return next;
+}
+
+export const hasConsent = (c: LocalConfig): boolean => (c.consent?.version ?? 0) >= CONSENT_VERSION;
+
+/** Environment variable first, then the config file (§10-4). */
+export const apiKeyOf = (c: LocalConfig): string | undefined => process.env.VULNINTEL_API_KEY || c.api_key || undefined;
+
+/**
+ * Per-install HMAC key for value hashes. Value hashes end up in appdata (ignores, snapshots);
+ * a keyed hash keeps low-entropy secrets (weak DB passwords) from being brute-forced from them.
+ */
+export async function installKey(appDir: string): Promise<Buffer> {
+  const file = join(appDir, "install.key");
+  try {
+    const k = await readFile(file);
+    if (k.length === 32) return k;
+  } catch {
+    // create below
+  }
+  await mkdir(appDir, { recursive: true });
+  const key = randomBytes(32);
+  try {
+    await writeFile(file, key, { flag: "wx", mode: 0o600 });
+    return key;
+  } catch {
+    return readFile(file); // another process created it first
+  }
 }
