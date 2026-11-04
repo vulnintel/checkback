@@ -79,6 +79,29 @@ describe("AC14 supabase-rls", () => {
     expect(byRule(r, "supabase-rls").find((f) => f.kind === "service_role_client")).toMatchObject({ severity: "critical", confidence: "confirmed" });
   });
 
+  it("only Supabase service keys count as service_role_client; a Stripe secret in client code goes to secret-public-env-prefix", async () => {
+    const jwt = ["eyJhbGciOiJIUzI1NiJ9", Buffer.from(JSON.stringify({ role: "service_role", iss: "supabase" })).toString("base64url"), "c2lnbmF0dXJlLXZhbHVlLXg"].join(".");
+    const r = await scanDefault(
+      project({
+        ...sb,
+        "scripts/seed.ts": `const k = "${jwt}";`, // a service_role hit elsewhere must not upgrade non-Supabase names
+        "app/checkout/page.tsx": '"use client";\nconst a = process.env.NEXT_PUBLIC_STRIPE_SECRET_KEY;\nconst b = process.env.STRIPE_SECRET_KEY;\nconst c = process.env.NEXT_PUBLIC_API_SECRET_KEY;',
+        "src/lib/admin.ts": "const d = process.env.SUPABASE_SERVICE_ROLE_KEY;\nconst e = import.meta.env.VITE_SUPABASE_SECRET_KEY;\nconst f = process.env.SERVICE_ROLE_KEY;",
+      }),
+    );
+    const src = byRule(r, "supabase-rls").filter((f) => f.kind === "service_role_client");
+    expect(src.map((f) => [f.location!.file, f.location!.line, f.severity, f.confidence])).toEqual([
+      ["src/lib/admin.ts", 1, "critical", "confirmed"],
+      ["src/lib/admin.ts", 2, "critical", "confirmed"],
+      ["src/lib/admin.ts", 3, "critical", "confirmed"],
+    ]);
+    // The Stripe/other public secrets are still caught — by the variable-name rule.
+    expect(byRule(r, "secret-public-env-prefix").filter((f) => f.location!.file === "app/checkout/page.tsx").map((f) => [f.location!.line, f.severity, f.confidence])).toEqual([
+      [2, "high", "review"],
+      [4, "high", "review"],
+    ]);
+  });
+
   it("not a Supabase project → nothing", async () => {
     expect(byRule(await scanDefault(project({ "a.sql": "create table x (id int);" })), "supabase-rls")).toEqual([]);
   });

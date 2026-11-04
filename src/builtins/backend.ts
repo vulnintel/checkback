@@ -50,7 +50,10 @@ export async function supabaseRls(ctx: BuiltinCtx): Promise<BF[]> {
     if (!t) continue;
     const client = /^\s*["']use client["']/m.test(t) || /^src\//.test(f.rel) || /(^|\/)(pages|app)\//.test(f.rel);
     if (!client) continue;
-    for (const m of t.matchAll(/(?:process\.env|import\.meta\.env)\.([A-Z0-9_]*(?:SERVICE_ROLE|SECRET_KEY)[A-Z0-9_]*)/g)) {
+    for (const m of t.matchAll(/(?:process\.env|import\.meta\.env)\.([A-Z0-9_]+)/g)) {
+      // Supabase service keys only: other secrets (e.g. STRIPE_SECRET_KEY) belong to
+      // secret-public-env-prefix and the value-based secret rules.
+      if (!/SERVICE_ROLE/.test(m[1]!) && !(/SUPABASE/.test(m[1]!) && /SECRET/.test(m[1]!))) continue;
       out.push({
         rule: R, kind: "service_role_client", file: f.rel, line: lineAt(t, m.index), value: m[1]!,
         ...(secretHit ? { severity: "critical", confidence: "confirmed" } : { severity: "high", confidence: "review" }),
