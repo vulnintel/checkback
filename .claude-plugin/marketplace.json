@@ -1,0 +1,15 @@
+{
+  "name": "vulnintel",
+  "description": "Plugins by VulnIntel",
+  "owner": {
+    "name": "VulnIntel",
+    "url": "https://www.vulnintelapp.com"
+  },
+  "plugins": [
+    {
+      "name": "checkback",
+      "source": "./plugin",
+      "description": "Security checks for vibe-coded apps — a plugin for Claude Code"
+    }
+  ]
+}

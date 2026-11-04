@@ -16,7 +16,8 @@ const flag = (name: string): string | undefined => {
 };
 
 if (cmd === "mcp") {
-  await runStdioServer({ cwd: process.cwd() });
+  // Plugin MCP servers start in the plugin folder; Claude Code passes the project root here.
+  await runStdioServer({ cwd: process.env.CLAUDE_PROJECT_DIR || process.cwd() });
 } else if (cmd === "consent") {
   const appDir = defaultAppDir();
   const lang = (await readConfig(appDir)).lang ?? osLang();

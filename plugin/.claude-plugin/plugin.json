@@ -1,0 +1,13 @@
+{
+  "name": "checkback",
+  "version": "0.0.0",
+  "description": "Security checks for vibe-coded apps — a plugin for Claude Code",
+  "author": {
+    "name": "VulnIntel",
+    "url": "https://www.vulnintelapp.com"
+  },
+  "homepage": "https://github.com/vulnintel/checkback",
+  "repository": "https://github.com/vulnintel/checkback",
+  "license": "Apache-2.0",
+  "keywords": ["security", "secrets", "dependencies", "supabase", "firebase"]
+}
