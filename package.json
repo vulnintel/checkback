@@ -19,10 +19,12 @@
   "files": [
     "dist",
     "templates",
-    "data"
+    "data",
+    "web/index.html",
+    "web/app.css"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.web.json",
     "test": "vitest run"
   },
   "dependencies": {

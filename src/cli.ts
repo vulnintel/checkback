@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-// Entry points: `checkback mcp` (stdio MCP server), `checkback consent` (TTY only).
-// `scan` / `sbom` print JSON for development checks. The GUI arrives in stage 7.
+// Entry points: `checkback` / `checkback gui` (local web GUI, opens the browser unless --no-open),
+// `checkback mcp` (stdio MCP server), `checkback consent` (TTY only).
+// `scan` / `sbom` print JSON for development checks.
 import { readFile } from "node:fs/promises";
 import { defaultAppDir, readConfig } from "./appdata.js";
 import { ignoreCommand, trackCommand, watchCommand } from "./commands.js";
@@ -15,7 +16,22 @@ const flag = (name: string): string | undefined => {
   return i >= 0 ? args[i + 1] : undefined;
 };
 
-if (cmd === "mcp") {
+if (cmd === undefined || cmd === "gui" || cmd === "--no-open") {
+  const { startGui } = await import("./gui/server.js");
+  const { openBrowser } = await import("./gui/open.js");
+  const lang = (await readConfig(defaultAppDir())).lang ?? osLang();
+  const g = await startGui({ cwd: process.cwd(), onIdle: () => process.exit(0) });
+  process.stdout.write(
+    lang === "ko"
+      ? `checkback 화면: ${g.url}
+(이 주소는 이번 실행에서만 쓸 수 있습니다. 끝내려면 Ctrl+C)
+`
+      : `checkback screen: ${g.url}
+(This address works for this run only. Press Ctrl+C to stop.)
+`,
+  );
+  if (!process.argv.includes("--no-open")) openBrowser(g.url);
+} else if (cmd === "mcp") {
   // Plugin MCP servers start in the plugin folder; Claude Code passes the project root here.
   await runStdioServer({ cwd: process.env.CLAUDE_PROJECT_DIR || process.cwd() });
 } else if (cmd === "consent") {
@@ -43,6 +59,6 @@ if (cmd === "mcp") {
 } else if (cmd === "sbom") {
   process.stdout.write(`${buildSbom(await readInventory(process.cwd()), { forUpload: args.includes("--upload") })}\n`);
 } else {
-  process.stderr.write("usage: checkback mcp | checkback consent | checkback watch | checkback track | checkback ignore [--remove] | checkback scan [--lang ko|en] [--template file.yaml] | checkback sbom [--upload]\n");
+  process.stderr.write("usage: checkback [gui] [--no-open] | checkback mcp | checkback consent | checkback watch | checkback track | checkback ignore [--remove] | checkback scan [--lang ko|en] [--template file.yaml] | checkback sbom [--upload]\n");
   process.exitCode = 2;
 }
