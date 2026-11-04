@@ -1,4 +1,6 @@
 export { scan, ENGINE_VERSION, type ScanOptions } from "./scan.js";
+export { recordFixRequest, clearSnapshot, readLastScan, readSnapshot, type Compare, type StoredScan, type Snapshot } from "./recheck.js";
+export { readConfig, updateConfig, hasConsent, type LocalConfig } from "./appdata.js";
 export { loadTemplate, loadDefaultTemplate, TemplateError, BUILTIN_IDS, FIX_PROMPT_VARS, type TemplateIssue } from "./template.js";
 export { addIgnore, removeIgnore, listIgnores, type IgnoreEntry } from "./ignores.js";
 export { defaultAppDir } from "./appdata.js";

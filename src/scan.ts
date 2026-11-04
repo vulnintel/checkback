@@ -1,13 +1,13 @@
-import { createHmac } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { readFile, realpath, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { apiKeyOf, defaultAppDir, hasConsent, installKey, readConfig, type LocalConfig } from "./appdata.js";
+import { apiKeyOf, defaultAppDir, hasConsent, installKey, readConfig, writeJson, type LocalConfig } from "./appdata.js";
 import { firebaseRules, supabaseRls, type BF, type BuiltinCtx } from "./builtins/backend.js";
 import { depsBuiltins, type NetCtx } from "./builtins/deps.js";
 import { jsImports, pyImports } from "./builtins/imports.js";
 import { BUILTIN_NAMES, KIND_TEXT } from "./builtins/text.js";
-import { lookupScope, readInventory } from "./deps/inventory.js";
+import { lookupScope, readInventory, type Inventory } from "./deps/inventory.js";
 import { ViBudget } from "./net/budget.js";
 import { Cache, defaultHttp, VERSION, type Fetch } from "./net/http.js";
 import { configValue, parseConfig, parseDotenv } from "./config-file.js";
@@ -17,6 +17,7 @@ import {
 import { gitInfo, globToPathspecs, type GitInfo } from "./git.js";
 import { matchAny, matchGlob } from "./glob.js";
 import { listIgnores } from "./ignores.js";
+import { compareWith, lastScanFile, lockStates, readLastScan, readSnapshot, storedFinding, type StoredScan } from "./recheck.js";
 import { envHasOnlyPublicValues, hiddenSourcemapConfig, LATE_RULES, REFINERS } from "./refine.js";
 import { RegexRunner, RULE_TOTAL_LIMIT_MS, type RawMatch } from "./regex-runner.js";
 import { allowlisted, decodeJwtPayload, fingerprint, isPlaceholder, mask } from "./secrets.js";
@@ -37,6 +38,8 @@ export interface ScanOptions {
   fetch?: Fetch;
   /** Injected clock (ms). */
   now?: () => number;
+  /** Compare with the fix-request snapshot / previous scan and store this scan (§7-8). Default true. */
+  recheck?: boolean;
 }
 
 const CONF_RANK: Record<Confidence, number> = { confirmed: 0, review: 1, info: 2 };
@@ -82,22 +85,61 @@ export async function scan(cwd: string, template: Template, opts: ScanOptions = 
     active.filter((r): r is ConfigRule => r.type === "config"),
   );
   for (const r of active) if (r.type === "file") await run.fileRule(r);
-  await run.builtins(builtins, { cfg, appDir, fetch: opts.fetch, now: (opts.now ?? Date.now)() });
+  const now = (opts.now ?? Date.now)();
+  const inv = await readInventory(root, files);
+  await run.builtins(builtins, { cfg, appDir, fetch: opts.fetch, now, inv });
 
   let findings = run.finish();
-  if (opts.ignores !== false) {
-    const ignored = new Set((await listIgnores(root, appDir)).map((e) => e.id));
-    const before = findings.length;
-    findings = findings.filter((f) => !ignored.has(f.id));
-    run.stats.ignored = before - findings.length;
-  }
-  return {
+  const ignored = new Set(opts.ignores === false ? [] : (await listIgnores(root, appDir)).map((e) => e.id));
+  const before = findings.length;
+  findings = findings.filter((f) => !ignored.has(f.id));
+  run.stats.ignored = before - findings.length;
+  const checked = template.rules.flatMap((r) => run.checked.get(r.id) ?? []);
+  const result: ScanResult = {
     engine_version: ENGINE_VERSION,
     template_id: template.id,
+    scan_at: new Date(now).toISOString(),
     findings,
-    checked: template.rules.flatMap((r) => run.checked.get(r.id) ?? []),
+    checked,
     stats: run.stats,
   };
+  if (opts.recheck === false) return result;
+
+  const locks = await lockStates(inv, files);
+  const snap = await readSnapshot(root, appDir);
+  const base = snap ?? (await readLastScan(root, appDir));
+  if (base) {
+    const r = compareWith(base, snap ? "fix_request" : "previous", findings, checked, locks, ignored);
+    result.findings = r.findings.sort(byPriority);
+    result.compare = r.compare;
+  }
+  const stored: StoredScan = {
+    scan_id: randomUUID(),
+    scan_at: result.scan_at,
+    template_id: template.id,
+    engine_version: ENGINE_VERSION,
+    findings: findings.map(storedFinding),
+    checked,
+    locks,
+  };
+  await writeJson(await lastScanFile(appDir, root), stored);
+  return result;
+}
+
+/** Fix items first: confidence, severity, then KEV → VPI → EPSS → CVSS (§7-3), then location. */
+export function byPriority(a: Finding, b: Finding): number {
+  return (
+    CONF_RANK[a.confidence] - CONF_RANK[b.confidence] ||
+    SEV_RANK[a.severity] - SEV_RANK[b.severity] ||
+    Number(b.kev ?? false) - Number(a.kev ?? false) ||
+    (b.vpi_level ?? 0) - (a.vpi_level ?? 0) ||
+    (b.epss ?? 0) - (a.epss ?? 0) ||
+    (b.cvss ?? 0) - (a.cvss ?? 0) ||
+    cmp(a.location?.file ?? "", b.location?.file ?? "") ||
+    (a.location?.line ?? 0) - (b.location?.line ?? 0) ||
+    cmp(a.rule_id, b.rule_id) ||
+    cmp(a.id, b.id)
+  );
 }
 
 interface AddArgs {
@@ -316,9 +358,12 @@ class Run {
       let confidence: Confidence = "confirmed";
       let valueHash: string;
       let content: Buffer | null = null;
-      if (onDisk.has(p)) {
+      if (rule.content_check) {
+        // History judgment: the same path stays in history whatever the working tree holds now.
+        valueHash = this.hv(`path:${p}`);
+        content = onDisk.has(p) ? await readTextBuffer(join(this.root, p)) : await this.git.lastHistoryContent(p);
+      } else if (onDisk.has(p)) {
         valueHash = await this.hashFile(join(this.root, p));
-        if (rule.content_check) content = await readTextBuffer(join(this.root, p));
       } else {
         content = await this.git.lastHistoryContent(p);
         valueHash = this.hv(content ?? "");
@@ -426,7 +471,7 @@ class Run {
   }
 
   /** Stage-4 builtins (§7-1~7-3). External lookups only after consent (§3-1). */
-  async builtins(rules: BuiltinRule[], o: { cfg: LocalConfig; appDir: string; fetch?: Fetch; now: number }): Promise<void> {
+  async builtins(rules: BuiltinRule[], o: { cfg: LocalConfig; appDir: string; fetch?: Fetch; now: number; inv: Inventory }): Promise<void> {
     if (rules.length === 0) return;
     const on = (id: string): BuiltinRule | undefined => rules.find((r) => r.id === id);
     const texts = new Map<string, Promise<string | null>>();
@@ -440,7 +485,7 @@ class Run {
       }
       return t;
     };
-    const inv = await readInventory(this.root, this.files);
+    const inv = o.inv;
     const ctx: BuiltinCtx = {
       files: this.files,
       text,
@@ -528,19 +573,7 @@ class Run {
         s.notes = [...new Set([...(s.notes ?? []), "in_build_output" as const])];
       }
     }
-    return [...this.findings.values()].sort(
-      (a, b) =>
-        CONF_RANK[a.confidence] - CONF_RANK[b.confidence] ||
-        SEV_RANK[a.severity] - SEV_RANK[b.severity] ||
-        Number(b.kev ?? false) - Number(a.kev ?? false) ||
-        (b.vpi_level ?? 0) - (a.vpi_level ?? 0) ||
-        (b.epss ?? 0) - (a.epss ?? 0) ||
-        (b.cvss ?? 0) - (a.cvss ?? 0) ||
-        cmp(a.location?.file ?? "", b.location?.file ?? "") ||
-        (a.location?.line ?? 0) - (b.location?.line ?? 0) ||
-        cmp(a.rule_id, b.rule_id) ||
-        cmp(a.id, b.id),
-    );
+    return [...this.findings.values()].sort(byPriority);
   }
 }
 

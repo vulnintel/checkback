@@ -29,6 +29,8 @@ export interface LockParse {
   indexUrls?: string[];
   /** requirements: `-r` files that were followed (CWD-relative). */
   includes?: string[];
+  /** npm v2/v3 / pnpm: what the lock records for the root manifest (§7-8 lock consistency). */
+  root?: { deps: Record<string, string>; versions: Record<string, string> };
 }
 
 type Obj = Record<string, unknown>;
@@ -42,6 +44,11 @@ function npmOrigin(version: string, resolved: string | undefined): Package["orig
   if (PUBLIC_NPM.test(resolved)) return "registry";
   return /^https?:\/\//.test(resolved) && !/^git/.test(resolved) ? "private" : "local";
 }
+
+const depSpecs = (o: unknown): Record<string, string> =>
+  isObj(o)
+    ? Object.fromEntries(["dependencies", "devDependencies", "optionalDependencies"].flatMap((k) => (isObj(o[k]) ? Object.entries(o[k] as Obj).map(([n, v]) => [n, String(v)]) : [])))
+    : {};
 
 const depNames = (o: unknown): string[] =>
   isObj(o) ? ["dependencies", "devDependencies", "optionalDependencies"].flatMap((k) => (isObj(o[k]) ? Object.keys(o[k] as Obj) : [])) : [];
@@ -65,9 +72,21 @@ export function parseNpmLock(text: string, manifest?: unknown): LockParse {
       prev.direct ||= p.direct;
     }
   };
+  let root: LockParse["root"];
   if (isObj(data.packages)) {
     // v2/v3: keys are install paths. Non-node_modules keys are the root ("") and workspace folders.
     const entries = Object.entries(data.packages);
+    const pk = data.packages;
+    const deps = depSpecs(pk[""]);
+    root = {
+      deps,
+      versions: Object.fromEntries(
+        Object.keys(deps).flatMap((n) => {
+          const e = pk[`node_modules/${n}`];
+          return isObj(e) && typeof e.version === "string" ? [[n, e.version]] : [];
+        }),
+      ),
+    };
     const declared = new Set(entries.filter(([k]) => !k.includes("node_modules/")).flatMap(([, e]) => depNames(e)));
     for (const [k, e] of entries) {
       const at = k.lastIndexOf("node_modules/");
@@ -110,7 +129,7 @@ export function parseNpmLock(text: string, manifest?: unknown): LockParse {
     };
     walk(data.dependencies, 0);
   }
-  return { status: "ok", packages: [...out.values()] };
+  return { status: "ok", packages: [...out.values()], ...(root && { root }) };
 }
 
 const SUPPORTED_PNPM = new Set(["6.0", "6.1", "9.0"]);
@@ -126,11 +145,24 @@ export function parsePnpmLock(text: string): LockParse {
   }
   if (objs.length === 0) return { status: "error", detail: "no lockfileVersion", packages: [] };
   const out = new Map<string, Package>();
+  let root: LockParse["root"];
   for (const o of objs) {
     const v = String(o.lockfileVersion);
     if (/^[1-5](\.|$)/.test(v)) return { status: "regenerate", detail: `lockfileVersion ${v} — regenerate with pnpm 8 or later`, packages: [] };
     if (!SUPPORTED_PNPM.has(v)) return { status: "error", detail: `unsupported lockfileVersion ${v}`, packages: [] };
     const importers: Obj[] = isObj(o.importers) ? Object.values(o.importers).filter(isObj) : [o];
+    const rootImp = isObj(o.importers) ? o.importers["."] : o;
+    if (isObj(rootImp) && ["dependencies", "devDependencies", "optionalDependencies"].some((k) => isObj(rootImp[k]))) {
+      root = { deps: {}, versions: {} };
+      for (const sect of ["dependencies", "devDependencies", "optionalDependencies"]) {
+        if (!isObj(rootImp[sect])) continue;
+        for (const [n, d] of Object.entries(rootImp[sect] as Obj)) {
+          if (!isObj(d)) continue;
+          root.deps[n] = String(d.specifier ?? "");
+          root.versions[n] = stripPeers(String(d.version ?? ""));
+        }
+      }
+    }
     const direct = new Set<string>();
     const prodRoots: string[] = [];
     for (const imp of importers) {
@@ -174,7 +206,7 @@ export function parsePnpmLock(text: string): LockParse {
       if (!out.has(k)) out.set(k, p);
     }
   }
-  return { status: "ok", packages: [...out.values()] };
+  return { status: "ok", packages: [...out.values()], ...(root && { root }) };
 }
 
 const stripPeers = (k: string): string => {

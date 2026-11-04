@@ -13,6 +13,8 @@ export interface Lockfile {
   status: "ok" | "regenerate" | "error";
   detail?: string;
   packages: Package[];
+  /** What the lock records for its root manifest (npm v2/v3, pnpm). */
+  root?: { deps: Record<string, string>; versions: Record<string, string> };
 }
 
 export interface ManifestDep {

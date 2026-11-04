@@ -92,9 +92,12 @@ export interface ScanStats {
 export interface ScanResult {
   engine_version: string;
   template_id: string;
+  scan_at: string;
   findings: Finding[];
   checked: CheckedRule[];
   stats: ScanStats;
+  /** Present when a baseline exists: fix-request snapshot, else the previous scan (§7-8). */
+  compare?: import("./recheck.js").Compare;
 }
 
 // ---------- template ----------

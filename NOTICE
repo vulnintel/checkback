@@ -9,5 +9,8 @@ This product includes software and data from third parties:
   API key format regular expressions adapted in templates/default.yaml.
 - yaml (https://github.com/eemeli/yaml), ISC License.
 - smol-toml (https://github.com/squirrelchat/smol-toml), BSD-3-Clause License.
+- npm-high-impact 1.13.0 (https://github.com/wooorm/npm-high-impact, commit 9e29478), MIT License —
+  package name list snapshot in data/npm-high-impact.json (17,338 names; license in
+  data/npm-high-impact.LICENSE).
 - @cyclonedx/cyclonedx-library (https://github.com/CycloneDX/cyclonedx-javascript-library),
   Apache License 2.0.
