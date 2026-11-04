@@ -1,0 +1,520 @@
+# checkback default template — read-only, versioned with the engine (spec §6-2, §6-5, §6-6).
+# Key-format regexes adapted from Gitleaks (MIT) and secretlint preset-recommend (MIT); see NOTICE.
+# Rule-specific judgments that a regex cannot express live in src/refine.ts, keyed by rule id.
+schema: 1
+id: default
+name: Default
+rules:
+  # ---------- secrets (pattern, build_output) ----------
+  - id: secret-openai
+    name: { ko: OpenAI 키 노출, en: OpenAI key exposed }
+    type: pattern
+    severity: critical
+    files: ['**/*']
+    build_output: true
+    match:
+      - '(?<![A-Za-z0-9_-])sk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{40,}'
+      - '(?<![A-Za-z0-9_-])sk-[A-Za-z0-9]{20}T3BlbkFJ[A-Za-z0-9]{20}'
+    description:
+      ko: OpenAI API 키가 코드나 빌드 결과에 들어 있습니다. 이 키를 가진 사람은 누구나 계정 요금으로 API를 쓸 수 있습니다.
+      en: An OpenAI API key is in your code or build output. Anyone who has it can use the API on your bill.
+    fix_prompt:
+      ko: 먼저 사람이 OpenAI 대시보드에서 이 키를 폐기하고 새로 발급합니다. 코드에서는 키 값을 지우고 서버 쪽 환경변수에서 읽게 바꾸세요. 브라우저 코드에서는 OpenAI를 직접 부르지 말고 서버 API를 거치게 하세요.
+      en: First, a person revokes this key in the OpenAI dashboard and issues a new one. In code, remove the value and read it from a server-side environment variable. Do not call OpenAI from browser code; go through your server.
+
+  - id: secret-anthropic
+    name: { ko: Anthropic 키 노출, en: Anthropic key exposed }
+    type: pattern
+    severity: critical
+    files: ['**/*']
+    build_output: true
+    match:
+      - '(?<![A-Za-z0-9_-])sk-ant-(?:api|admin)\d{2}-[A-Za-z0-9_-]{80,}'
+    description:
+      ko: Anthropic API 키가 코드나 빌드 결과에 들어 있습니다. 이 키를 가진 사람은 누구나 계정 요금으로 API를 쓸 수 있습니다.
+      en: An Anthropic API key is in your code or build output. Anyone who has it can use the API on your bill.
+    fix_prompt:
+      ko: 먼저 사람이 Anthropic Console에서 이 키를 폐기하고 새로 발급합니다. 코드에서는 키 값을 지우고 서버 쪽 환경변수에서 읽게 바꾸세요.
+      en: First, a person revokes this key in the Anthropic Console and issues a new one. In code, remove the value and read it from a server-side environment variable.
+
+  - id: secret-supabase-service-role
+    name: { ko: Supabase 서비스 키 노출, en: Supabase service key exposed }
+    type: pattern
+    severity: critical
+    files: ['**/*']
+    build_output: true
+    match:
+      - 'eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}'
+      - '(?<![A-Za-z0-9_])sb_secret_[A-Za-z0-9_-]{20,}'
+    jwt_claims: { role: service_role }
+    description:
+      ko: Supabase의 service_role 키(또는 sb_secret_ 키)는 행 수준 보안(RLS)을 무시하고 DB 전체를 읽고 쓸 수 있습니다. sb_secret_ 키는 브라우저에서 막히지만, 유출된 키는 다른 도구로 쓸 수 있어 교체가 필요합니다.
+      en: The Supabase service_role key (or an sb_secret_ key) bypasses Row Level Security and can read and write your whole database. sb_secret_ keys are rejected in browsers, but a leaked key still works from other tools, so it must be replaced.
+    fix_prompt:
+      ko: 먼저 사람이 Supabase 대시보드에서 이 키를 폐기하고 새로 발급합니다. 레거시 JWT 키라면 새 API 키 체계(sb_secret_/sb_publishable_)로 전환하세요. 코드에서는 키 값을 지우고, 이 키를 쓰는 코드를 서버 쪽(API 라우트·서버 함수)으로 옮겨 서버 환경변수에서 읽게 하세요.
+      en: First, a person revokes this key in the Supabase dashboard and issues a new one. If it is a legacy JWT key, switch to the new API key system (sb_secret_/sb_publishable_). In code, remove the value and move the code that uses it to the server side (API route or server function), reading it from a server environment variable.
+
+  - id: secret-supabase-pat
+    name: { ko: Supabase 개인 액세스 토큰 노출, en: Supabase personal access token exposed }
+    type: pattern
+    severity: critical
+    files: ['**/*']
+    build_output: true
+    match:
+      - '(?<![A-Za-z0-9_])sbp_[A-Za-z0-9]{40}(?![A-Za-z0-9])'
+    description:
+      ko: Supabase 개인 액세스 토큰은 계정의 모든 프로젝트를 관리 API로 다룰 수 있는 권한입니다.
+      en: A Supabase personal access token can manage every project in your account through the Management API.
+    fix_prompt:
+      ko: 먼저 사람이 Supabase 계정 설정에서 이 토큰을 폐기합니다. 코드와 설정 파일에서 토큰 값을 지우고, 꼭 필요하면 저장소 밖 환경변수로만 쓰세요.
+      en: First, a person revokes this token in Supabase account settings. Remove the value from code and config files; if it is really needed, keep it only in an environment variable outside the repository.
+
+  - id: secret-aws
+    name: { ko: AWS 키 노출, en: AWS key exposed }
+    type: pattern
+    severity: critical
+    files: ['**/*']
+    build_output: true
+    match:
+      - '(?<![A-Z0-9])(?:AKIA|ASIA)[A-Z0-9]{16}(?![A-Z0-9])'
+      - '(?:aws_secret_access_key|AWS_SECRET_ACCESS_KEY|SecretAccessKey)["'']?\s*[=:]\s*["'']?[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])'
+    description:
+      ko: AWS 액세스 키가 코드에 들어 있습니다. 권한에 따라 서버·저장소·결제까지 다른 사람이 다룰 수 있습니다.
+      en: An AWS access key is in your code. Depending on its permissions, others can control servers, storage and billing.
+    fix_prompt:
+      ko: 먼저 사람이 AWS IAM에서 이 키를 폐기(비활성화·삭제)하고 새로 발급합니다. 코드에서는 키 값을 지우고 서버 환경변수나 AWS 역할(IAM Role)로 인증하게 바꾸세요.
+      en: First, a person deactivates and deletes this key in AWS IAM and issues a new one. In code, remove the value and authenticate with a server environment variable or an IAM role.
+
+  - id: secret-stripe-live
+    name: { ko: Stripe 비밀 키 노출, en: Stripe secret key exposed }
+    type: pattern
+    severity: critical
+    files: ['**/*']
+    build_output: true
+    match:
+      - '(?<![A-Za-z0-9_])(?:sk|rk)_live_[A-Za-z0-9]{20,}'
+      - '(?<![A-Za-z0-9_])sk_org_[A-Za-z0-9_]{20,}'
+    description:
+      ko: Stripe 운영 비밀 키는 결제·환불·고객 정보를 다룰 수 있습니다. pk_ 로 시작하는 공개 키와 다릅니다.
+      en: A live Stripe secret key can create charges, refunds and read customer data. It is not the same as a public pk_ key.
+    fix_prompt:
+      ko: 먼저 사람이 Stripe 대시보드에서 이 키를 폐기하고 새 키로 교체(롤)합니다. 코드에서는 키 값을 지우고 서버 환경변수에서 읽게 바꾸세요. 브라우저에는 pk_ 공개 키만 두세요.
+      en: First, a person rolls this key in the Stripe dashboard. In code, remove the value and read it from a server environment variable. Only the public pk_ key belongs in the browser.
+
+  - id: secret-github
+    name: { ko: GitHub 토큰 노출, en: GitHub token exposed }
+    type: pattern
+    severity: critical
+    files: ['**/*']
+    build_output: true
+    match:
+      - '(?<![A-Za-z0-9_])(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36}(?![A-Za-z0-9])'
+      - '(?<![A-Za-z0-9_])github_pat_[A-Za-z0-9_]{40,}'
+    description:
+      ko: GitHub 토큰으로 저장소 코드를 읽거나 바꿀 수 있습니다.
+      en: A GitHub token can read or change your repositories.
+    fix_prompt:
+      ko: 먼저 사람이 GitHub 설정에서 이 토큰을 폐기합니다. 코드에서는 토큰 값을 지우고 서버 환경변수나 CI 비밀 값에서 읽게 바꾸세요.
+      en: First, a person revokes this token in GitHub settings. In code, remove the value and read it from a server environment variable or a CI secret.
+
+  - id: secret-google-key
+    name: { ko: Google API 키 확인 필요, en: Google API key needs review }
+    type: pattern
+    severity: medium
+    files: ['**/*']
+    build_output: true
+    match:
+      - '(?<![A-Za-z0-9_-])AIza[0-9A-Za-z_-]{35}(?![0-9A-Za-z_-])'
+    description:
+      ko: Google API 키가 있습니다. Firebase 웹 설정의 키는 공개해도 되지만, Gemini 같은 유료 API 키라면 다른 사람이 요금으로 쓸 수 있습니다.
+      en: A Google API key was found. Keys in a Firebase web config are meant to be public, but a key for a paid API such as Gemini can be used on your bill.
+    fix_prompt:
+      ko: 이 키가 어떤 API용인지 Google Cloud 콘솔에서 확인하세요. 유료 API용이면 먼저 사람이 키를 폐기·재발급하고, 코드에서는 서버 쪽 환경변수에서 읽게 바꾸세요. 공개용이면 콘솔에서 API·도메인 제한을 거세요.
+      en: Check in the Google Cloud console which APIs this key can call. If it is for a paid API, a person first revokes and reissues it, and the code reads it from a server-side environment variable. If it is meant to be public, add API and referrer restrictions in the console.
+
+  - id: secret-private-key
+    name: { ko: 개인 키 노출, en: Private key exposed }
+    type: pattern
+    severity: critical
+    files: ['**/*']
+    build_output: true
+    match:
+      - '-----BEGIN (?:RSA |EC |OPENSSH |DSA |ENCRYPTED )?PRIVATE KEY-----[\s\S]{0,10000}?-----END'
+    description:
+      ko: 개인 키(PEM) 전체가 파일에 들어 있습니다. 이 키로 서버 접속·서명·복호화를 할 수 있습니다.
+      en: A full private key (PEM) is in a file. It can be used to log in to servers, sign or decrypt.
+    fix_prompt:
+      ko: 먼저 사람이 이 키를 쓰는 서비스에서 키를 폐기하고 새 키 쌍을 만듭니다. 저장소에서는 키 파일을 지우고 .gitignore에 추가하세요.
+      en: First, a person revokes this key wherever it is used and creates a new key pair. Remove the key from the repository and add it to .gitignore.
+
+  - id: secret-db-url
+    name: { ko: DB 접속 주소에 비밀번호 포함, en: Database URL with password }
+    type: pattern
+    severity: high
+    files: ['**/*']
+    build_output: true
+    match:
+      - '(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?)://[^:/\s"''@]+:[^@\s"''/]+@[^/:\s"''?,]+'
+    description:
+      ko: 데이터베이스 접속 주소에 비밀번호가 들어 있습니다. 이 주소로 DB에 바로 접속할 수 있습니다.
+      en: A database connection URL contains a password. Anyone with it can connect to the database.
+    fix_prompt:
+      ko: 운영 DB라면 먼저 사람이 DB 비밀번호를 바꿉니다. 코드에서는 접속 주소를 지우고 서버 환경변수(DATABASE_URL 등)에서 읽게 바꾸세요.
+      en: If this is a real database, a person first changes its password. In code, remove the URL and read it from a server environment variable such as DATABASE_URL.
+
+  - id: secret-vulnintel
+    name: { ko: VulnIntel API 키 노출, en: VulnIntel API key exposed }
+    type: pattern
+    severity: critical
+    files: ['**/*']
+    build_output: true
+    match:
+      - '(?<![A-Za-z0-9_])vi_live_[0-9A-Za-z]{30,}'
+    description:
+      ko: VulnIntel API 키가 코드에 들어 있습니다.
+      en: A VulnIntel API key is in your code.
+    fix_prompt:
+      ko: 먼저 사람이 VulnIntel 설정에서 이 키를 폐기하고 새로 발급합니다. 키는 환경변수 VULNINTEL_API_KEY로만 쓰세요.
+      en: First, a person revokes this key in VulnIntel settings and issues a new one. Use the key only through the VULNINTEL_API_KEY environment variable.
+
+  - id: secret-public-env-prefix
+    name: { ko: 공개 환경변수에 비밀 값, en: Secret in a public env variable }
+    type: pattern
+    severity: high
+    files: ['**/*']
+    build_output: true
+    match:
+      - '(?<![A-Za-z0-9_])(?:NEXT_PUBLIC|VITE|EXPO_PUBLIC|REACT_APP)_[A-Z0-9_]+'
+    description:
+      ko: NEXT_PUBLIC_·VITE_·EXPO_PUBLIC_·REACT_APP_ 로 시작하는 환경변수는 브라우저로 보내는 코드에 그대로 들어갑니다. 이름에 SECRET·SERVICE_ROLE·PRIVATE가 있으면 비밀 값일 가능성이 큽니다.
+      en: Environment variables starting with NEXT_PUBLIC_, VITE_, EXPO_PUBLIC_ or REACT_APP_ are copied into the code sent to browsers. A name containing SECRET, SERVICE_ROLE or PRIVATE is likely a secret.
+    fix_prompt:
+      ko: 이 값이 실제 비밀이면 먼저 사람이 발급처에서 폐기하고 새로 발급합니다. 공개 접두사가 없는 이름으로 바꾸고, 이 값을 쓰는 코드를 서버 쪽으로 옮기세요.
+      en: If the value is a real secret, a person first revokes and reissues it at the provider. Rename the variable without the public prefix and move the code that uses it to the server side.
+
+  - id: secret-in-mcp-config
+    name: { ko: MCP 설정 파일에 키, en: Key in an MCP config file }
+    type: pattern
+    severity: high
+    files: ['.mcp.json', '**/.cursor/mcp.json', '**/.vscode/mcp.json', 'claude_desktop_config.json']
+    build_output: true
+    match:
+      - '"[A-Za-z0-9_-]*(?:KEY|Key|key|TOKEN|Token|token|SECRET|Secret|secret|PASSWORD|Password|password|AUTH|Auth|auth)[A-Za-z0-9_-]*"\s*:\s*"[^"\r\n]*"'
+      - '(?:--api-key|--token|--access-token)["'']?\s*[,=\s]\s*["'']?[A-Za-z0-9_.-]{16,}'
+    description:
+      ko: AI 도구의 MCP 설정 파일에 키 값이 그대로 적혀 있습니다. 이 파일은 저장소에 함께 올라가기 쉽습니다.
+      en: An AI tool's MCP config file contains a key value. These files are easy to commit by accident.
+    fix_prompt:
+      ko: 먼저 사람이 이 키를 발급처에서 폐기하고 새로 발급합니다. 설정 파일에는 값 대신 환경변수 참조를 쓰세요.
+      en: First, a person revokes this key at the provider and issues a new one. In the config file, reference an environment variable instead of the value.
+
+  # ---------- files & git ----------
+  - id: env-committed
+    name: { ko: .env 파일이 git에 올라감, en: .env file committed to git }
+    type: file
+    severity: critical
+    files: ['.env', '.env.local', '.env.production*', '.env.development*']
+    expect: absent
+    git: tracked
+    content_check: true
+    description:
+      ko: .env 파일이 git에 추적되거나 이력에 남아 있습니다. 파일을 지워도 이력에서 값을 꺼낼 수 있습니다.
+      en: A .env file is tracked by git or remains in its history. Deleting the file does not remove the values from history.
+    fix_prompt:
+      ko: 먼저 사람이 이 파일에 있던 키를 발급처에서 폐기하고 새로 발급합니다(키 교체 — 이력에 남으므로 파일 삭제만으로는 안 됩니다). 그다음 git 추적을 해제하고(git rm --cached {file}) .gitignore에 .env 규칙을 추가하세요.
+      en: First, a person revokes every key that was in this file and issues new ones (rotate — the values stay in history, so deleting the file is not enough). Then stop tracking it (git rm --cached {file}) and add a .env rule to .gitignore.
+
+  - id: gitignore-env-missing
+    name: { ko: .gitignore에 .env 규칙 없음, en: .gitignore has no .env rule }
+    type: pattern
+    severity: high
+    files: ['.gitignore']
+    when: '.env{,.*}'
+    mode: require
+    match:
+      - '^\s*(?:/|\*\*/)?\*?\.env[^\s/]*\s*$'
+    description:
+      ko: .env 파일이 있는데 .gitignore가 막지 않습니다. 실수로 커밋되기 쉽습니다.
+      en: There are .env files but .gitignore does not exclude them. They are easy to commit by accident.
+    fix_prompt:
+      ko: .gitignore에 .env와 .env*.local 규칙을 추가하세요. 예제 파일(.env.example)은 그대로 둡니다.
+      en: Add .env and .env*.local rules to .gitignore. Keep example files (.env.example) as they are.
+
+  - id: key-file-committed
+    name: { ko: 키 파일이 git에 올라감, en: Key file committed to git }
+    type: file
+    severity: critical
+    files: ['*.pem', '*.p12', '*.key', 'id_rsa*', '*firebase-adminsdk*.json', 'serviceAccount*.json']
+    exclude: ['*.pub']
+    expect: absent
+    git: tracked
+    description:
+      ko: 개인 키나 서비스 계정 키 파일이 git에 추적되고 있습니다.
+      en: A private key or service account key file is tracked by git.
+    fix_prompt:
+      ko: 먼저 사람이 이 키를 발급처에서 폐기하고 새로 발급합니다(키 교체 — 이력에 남습니다). 그다음 git 추적을 해제하고(git rm --cached {file}) .gitignore에 추가하세요.
+      en: First, a person revokes this key at the provider and issues a new one (rotate — it stays in history). Then stop tracking it (git rm --cached {file}) and add it to .gitignore.
+
+  - id: sourcemap-in-build
+    name: { ko: 빌드 결과에 소스맵, en: Source map in build output }
+    type: file
+    severity: medium
+    files: ['**/dist/**/*.map', '**/build/**/*.map', '**/.next/static/**/*.map']
+    expect: absent
+    description:
+      ko: 배포용 빌드 결과에 소스맵이 있어 원본 소스 코드를 그대로 볼 수 있습니다.
+      en: The build output contains source maps, which reveal your original source code.
+    fix_prompt:
+      ko: 번들러 설정에서 운영 빌드의 소스맵을 끄거나 'hidden'으로 바꾸고, 배포물에 .map 파일이 올라가지 않게 하세요.
+      en: In the bundler config, turn off production source maps or set them to 'hidden', and make sure .map files are not deployed.
+
+  # ---------- backend access rules (builtin, stage 4) ----------
+  - id: supabase-rls
+    type: builtin
+    enabled: true
+  - id: firebase-rules
+    type: builtin
+    enabled: true
+
+  # ---------- CORS ----------
+  - id: cors-wildcard
+    name: { ko: 모든 사이트에 CORS 허용, en: CORS allows every site }
+    type: pattern
+    severity: medium
+    files: ['**/*.{js,jsx,ts,tsx,mjs,cjs,py,java,kt,php,go,rb,json,toml,yaml,yml,conf}']
+    match:
+      - 'Access-Control-Allow-Origin["'']?\s*[:,=]?\s*["'']?\*'
+      - '\bcors\(\s*\{[^}]*\borigin\s*:\s*["'']\*["'']'
+      - '\ballow_origins\s*=\s*\[\s*["'']\*["'']'
+      - '\bCORS_(?:ALLOW_ALL_ORIGINS|ORIGIN_ALLOW_ALL)\s*=\s*True'
+      - '@CrossOrigin\(\s*(?:origins\s*=\s*)?"\*"'
+      - '\ballowedOrigins\(\s*"\*"'
+      - '\bCORS\(\s*app\s*\)'
+      - '\bcors\(\s*\)'
+    review:
+      - '\bCORS\(\s*app\s*\)'
+      - '\bcors\(\s*\)'
+    description:
+      ko: 어느 웹사이트에서든 이 서버 API를 부를 수 있게 열려 있습니다.
+      en: Any website can call this server's API.
+    fix_prompt:
+      ko: CORS 허용 출처를 실제 서비스 도메인 목록으로 좁히세요. 와일드카드(*)나 인자 없는 기본 설정을 쓰지 마세요.
+      en: Restrict allowed CORS origins to your real domains. Do not use a wildcard (*) or the no-argument default.
+
+  - id: cors-credentials-any
+    name: { ko: 쿠키 포함 요청을 모든 출처에 허용, en: Credentialed CORS for any origin }
+    type: pattern
+    severity: high
+    files: ['**/*.{js,jsx,ts,tsx,mjs,cjs,py,java,kt,php,go,rb}']
+    match:
+      - '\borigin\s*:\s*true'
+      - '\borigin\s*:\s*["'']\*["'']'
+      - '\ballow_origins\s*=\s*\[\s*["'']\*["'']\s*\]'
+      - '\ballow_origins\s*=\s*[A-Za-z_][A-Za-z0-9_.]*'
+      - '\b(?:callback|cb)\(\s*null\s*,\s*true\s*\)'
+      - 'Access-Control-Allow-Origin["'']?\s*[:,=]?\s*(?:req|request)\.(?:headers?\.origin|headers?\[["'']origin["'']\]|headers\.get\(["'']origin["'']\))'
+    review:
+      - '\ballow_origins\s*=\s*[A-Za-z_]'
+    description:
+      ko: 로그인 쿠키를 포함한 요청을 아무 사이트에서나 받도록 열려 있습니다. 다른 사이트가 사용자 대신 API를 부를 수 있습니다.
+      en: Requests with login cookies are accepted from any site, so another site can call your API as the user.
+    fix_prompt:
+      ko: credentials를 허용할 때는 허용 출처를 정해진 도메인 목록으로만 두세요. 요청의 Origin을 그대로 돌려주거나 모든 출처를 허용하지 마세요.
+      en: When credentials are allowed, allow only a fixed list of domains. Do not echo the request Origin or allow every origin.
+
+  # ---------- debug & source maps ----------
+  - id: debug-django
+    name: { ko: Django DEBUG 켜짐, en: Django DEBUG on }
+    type: pattern
+    severity: high
+    files: ['**/settings*.py', '**/settings/*.py']
+    match:
+      - '^DEBUG\s*=\s*.+$'
+    description:
+      ko: 운영 설정에서 DEBUG가 켜져 있으면 오류 화면에 설정·코드·환경 정보가 그대로 보입니다.
+      en: With DEBUG on in production, error pages show settings, code and environment details.
+    fix_prompt:
+      ko: 운영 설정에서 DEBUG = False로 두고, 개발용 설정에서만 켜지게 환경변수로 나누세요.
+      en: Set DEBUG = False in production settings and enable it only in development via an environment variable.
+
+  - id: debug-flask
+    name: { ko: Flask 디버그 모드, en: Flask debug mode }
+    type: pattern
+    severity: high
+    files: ['**/*.py']
+    match:
+      - '\bapp\.run\([^)]*\bdebug\s*=\s*True'
+    description:
+      ko: Flask 디버그 모드는 브라우저에서 서버 코드를 실행할 수 있는 디버거를 엽니다.
+      en: Flask debug mode opens a debugger that can run code on the server from the browser.
+    fix_prompt:
+      ko: app.run에서 debug=True를 지우고, 개발할 때만 환경변수로 켜세요.
+      en: Remove debug=True from app.run and enable debug only during development via an environment variable.
+
+  - id: debug-fastapi
+    name: { ko: FastAPI 디버그 모드, en: FastAPI debug mode }
+    type: pattern
+    severity: high
+    files: ['**/*.py']
+    match:
+      - '\bFastAPI\([^)]*\bdebug\s*=\s*True'
+    description:
+      ko: FastAPI 디버그 모드는 오류 응답에 스택트레이스를 그대로 보여줍니다.
+      en: FastAPI debug mode returns stack traces in error responses.
+    fix_prompt:
+      ko: FastAPI(...)에서 debug=True를 지우거나 환경변수로 개발 환경에서만 켜세요.
+      en: Remove debug=True from FastAPI(...) or enable it only in development via an environment variable.
+
+  - id: debug-laravel
+    name: { ko: Laravel 디버그 켜짐, en: Laravel debug on }
+    type: pattern
+    severity: high
+    files: ['**/config/app.php']
+    match:
+      - '["'']debug["'']\s*=>\s*(?:true|env\(\s*["'']APP_DEBUG["'']\s*,\s*true\s*\))'
+    review:
+      - 'env\('
+    description:
+      ko: Laravel 디버그가 켜져 있으면 오류 화면에 환경 변수와 코드가 보입니다.
+      en: With Laravel debug on, error pages show environment variables and code.
+    fix_prompt:
+      ko: config/app.php의 debug 기본값을 false로 두고, 운영 .env에서 APP_DEBUG=false로 설정하세요.
+      en: Make the debug default false in config/app.php and set APP_DEBUG=false in the production .env.
+
+  - id: debug-spring
+    name: { ko: Spring 디버그·내부 정보 노출, en: Spring debug or internals exposed }
+    type: pattern
+    severity: high
+    files: ['application*.{properties,yml,yaml}']
+    match:
+      - '^\s*debug\s*[=:]\s*(?:true|\$\{[^}\n]*\})'
+      - '^\s*server\.error\.include-stacktrace\s*[=:]\s*(?:always|\$\{[^}\n]*\})'
+      - '^\s*include-stacktrace\s*:\s*always'
+      - '^\s*management\.endpoints\.web\.exposure\.include\s*[=:]\s*(?:["'']?\*["'']?|\$\{[^}\n]*\})'
+    review:
+      - '\$\{'
+    description:
+      ko: 디버그·스택트레이스·관리 엔드포인트 전체 공개 설정은 서버 내부 정보를 보여줍니다.
+      en: Debug, stack traces or fully exposed management endpoints reveal server internals.
+    fix_prompt:
+      ko: 운영 설정에서 debug를 끄고, include-stacktrace를 never로, 관리 엔드포인트는 health 등 필요한 것만 공개하세요.
+      en: In production settings turn debug off, set include-stacktrace to never, and expose only the management endpoints you need (such as health).
+
+  - id: debug-env-production
+    name: { ko: 운영 .env에서 디버그 켜짐, en: Debug on in production .env }
+    type: pattern
+    severity: high
+    files: ['.env.prod*']
+    match:
+      - '^\s*(?:export\s+)?(?:DEBUG|APP_DEBUG|FLASK_DEBUG)\s*=\s*["'']?(?:true|True|TRUE|1|yes|Yes|YES|on|On|ON)["'']?\s*$'
+    description:
+      ko: 운영용 .env에서 디버그가 켜져 있습니다.
+      en: Debug is turned on in a production .env file.
+    fix_prompt:
+      ko: 운영 .env의 디버그 값을 false로 바꾸세요.
+      en: Set the debug value to false in the production .env file.
+
+  - id: sourcemap-next
+    name: { ko: Next.js 운영 소스맵 공개, en: Next.js production source maps }
+    type: pattern
+    severity: medium
+    files: ['**/next.config.{js,mjs,cjs,ts}']
+    match:
+      - '\bproductionBrowserSourceMaps\s*:\s*true'
+    description:
+      ko: 운영 빌드에서 브라우저용 소스맵을 만들어 원본 코드가 공개됩니다.
+      en: Production builds publish browser source maps, revealing your original code.
+    fix_prompt:
+      ko: next.config에서 productionBrowserSourceMaps를 false로 바꾸거나 지우세요.
+      en: Set productionBrowserSourceMaps to false in next.config, or remove it.
+
+  - id: sourcemap-vite
+    name: { ko: Vite 운영 소스맵 공개, en: Vite production source maps }
+    type: pattern
+    severity: medium
+    files: ['**/vite.config.{js,mjs,cjs,ts,mts}']
+    match:
+      - '\bsourcemap\s*:\s*[^,}\s]+'
+    description:
+      ko: 운영 빌드에서 소스맵을 함께 배포해 원본 코드가 공개됩니다.
+      en: Production builds ship source maps, revealing your original code.
+    fix_prompt:
+      ko: vite.config의 build.sourcemap을 false 또는 'hidden'으로 바꾸세요.
+      en: Set build.sourcemap in vite.config to false or 'hidden'.
+
+  # ---------- dependencies (builtin, stage 4) ----------
+  - id: hallucinated-package
+    type: builtin
+    enabled: true
+    params: { min_weekly_downloads: 1000, allow: [] }
+  - id: vulnerable-deps
+    type: builtin
+    enabled: true
+
+  # ---------- AI checks (§6-6) — only for the user's own AI, never run by the engine ----------
+  - id: ai-authz-bypass
+    type: ai_check
+    severity: high
+    check:
+      ko: 관리자나 특정 역할만 쓸 수 있는 기능을 서버가 역할을 확인해서 막는가(화면에서 버튼만 숨긴 것은 아닌가)
+      en: Does the server check the user's role before admin-only or role-only actions (not just hide the button in the UI)?
+  - id: ai-idor
+    type: ai_check
+    severity: high
+    check:
+      ko: 주소나 요청의 id만 바꿔서 다른 사람의 데이터를 읽거나 바꿀 수 없는가
+      en: Is it impossible to read or change another user's data just by changing an id in the URL or request?
+  - id: ai-injection
+    type: ai_check
+    severity: high
+    check:
+      ko: 사용자 입력이 SQL·NoSQL 쿼리, 셸 명령, HTML에 그대로 들어가지 않는가
+      en: Is user input kept out of SQL/NoSQL queries, shell commands and HTML without escaping or parameters?
+  - id: ai-server-validation
+    type: ai_check
+    severity: high
+    check:
+      ko: 금액·수량·권한 같은 값을 클라이언트가 보낸 그대로 믿지 않고 서버에서 다시 계산·검증하는가
+      en: Are prices, quantities and permissions recalculated and checked on the server instead of trusting what the client sent?
+  - id: ai-unauth-endpoint
+    type: ai_check
+    severity: high
+    check:
+      ko: 로그인 없이 부를 수 있는 API, 진단·테스트용 엔드포인트가 운영에 남아 있지 않은가
+      en: Are there no API, diagnostic or test endpoints left in production that work without logging in?
+  - id: ai-hardcoded-credential
+    type: ai_check
+    severity: high
+    check:
+      ko: 클라이언트 코드에 계정·비밀번호·토큰이 직접 적혀 있지 않은가
+      en: Is client code free of hardcoded accounts, passwords and tokens?
+  - id: ai-auth-disabled-default
+    type: ai_check
+    severity: high
+    check:
+      ko: 인증을 끄는 설정이나 플래그의 기본값이 꺼짐(인증 없음)으로 되어 있지 않은가
+      en: Do settings or flags that turn authentication off default to keeping it on?
+  - id: ai-cors-dynamic
+    type: ai_check
+    severity: medium
+    check:
+      ko: CORS 허용 출처를 요청의 Origin과 부분 문자열로 비교하거나 그대로 돌려주지 않는가
+      en: Is the CORS origin check free of substring comparisons with the request Origin and of echoing it back?
+  - id: ai-error-leak
+    type: ai_check
+    severity: medium
+    check:
+      ko: 오류 응답에 내부 오류 메시지나 스택트레이스를 그대로 돌려주지 않는가
+      en: Do error responses avoid returning internal error messages or stack traces?
+  - id: ai-log-secret
+    type: ai_check
+    severity: medium
+    check:
+      ko: 로그나 console.log에 비밀번호·토큰·개인정보를 찍지 않는가
+      en: Are passwords, tokens and personal data kept out of logs and console.log?
+  - id: ai-db-policy-logic
+    type: ai_check
+    severity: high
+    check:
+      ko: Supabase 정책이나 Firebase 규칙이 로그인만 하면 남의 데이터에 접근하게 하거나, 컬럼 단위로 너무 넓은 권한을 주지 않는가
+      en: Do Supabase policies or Firebase rules avoid letting any logged-in user reach other users' data, or granting too-broad column access?

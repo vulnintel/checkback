@@ -1,0 +1,427 @@
+import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { readFile, realpath, stat } from "node:fs/promises";
+import { join, resolve } from "node:path";
+import { defaultAppDir } from "./appdata.js";
+import { configValue, parseConfig, parseDotenv } from "./config-file.js";
+import {
+  collectFiles, decode, isEnvFile, MAX_FILE_BYTES, isExampleOrDoc, isSkippedPath, isTestPath, lineAt, lineTextAt, readText, type FileEntry,
+} from "./files.js";
+import { gitInfo, globToPathspecs, type GitInfo } from "./git.js";
+import { matchAny, matchGlob } from "./glob.js";
+import { listIgnores } from "./ignores.js";
+import { envHasOnlyPublicValues, hiddenSourcemapConfig, LATE_RULES, REFINERS } from "./refine.js";
+import { RegexRunner, RULE_TOTAL_LIMIT_MS, type RawMatch } from "./regex-runner.js";
+import { allowlisted, decodeJwtPayload, fingerprint, isPlaceholder, mask, sha256 } from "./secrets.js";
+import type {
+  CheckedRule, Confidence, ConfigRule, FileRule, Finding, Lang, NoteCode, PatternRule, Rule, ScanResult, ScanStats, Severity, Template,
+} from "./types.js";
+
+export const ENGINE_VERSION = "0.0.0";
+
+export interface ScanOptions {
+  /** Language of finding titles. Default "en". */
+  lang?: Lang;
+  /** `<appdata>/checkback` override (tests). */
+  appDir?: string;
+  /** Apply the local ignore list. Default true. */
+  ignores?: boolean;
+}
+
+const CONF_RANK: Record<Confidence, number> = { confirmed: 0, review: 1, info: 2 };
+const SEV_RANK: Record<Severity, number> = { critical: 0, high: 1, medium: 2 };
+const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0); // locale-independent
+const lower = (a: Confidence, b: Confidence): Confidence => (CONF_RANK[a] >= CONF_RANK[b] ? a : b);
+
+/** Secret rules get placeholder/allowlist/local-only handling and a `secret_kind`. */
+export const isSecretRule = (r: PatternRule): boolean => r.build_output || r.id.startsWith("secret-");
+
+const applies = (r: { files: string[]; exclude: string[]; build_output?: boolean }, f: FileEntry): boolean =>
+  (!f.build || r.build_output === true) && matchAny(r.files, f.rel) && !matchAny(r.exclude, f.rel);
+
+const literalPath = (glob: string | undefined): string | null => (glob && !/[*?[{]/.test(glob) ? glob : null);
+
+/**
+ * Stage-1 scan of `cwd` (fixed target, spec §3) with `template`. Local only — no network.
+ * Builtin rules are registered but reported as not run until stage 4.
+ */
+export async function scan(cwd: string, template: Template, opts: ScanOptions = {}): Promise<ScanResult> {
+  const root = await realpath(resolve(cwd));
+  const files = await collectFiles(root);
+  const run = new Run(root, files, await gitInfo(root), opts.lang ?? "en");
+
+  const active: Rule[] = [];
+  for (const r of template.rules) {
+    if (r.type === "ai_check") continue; // natural-language checks for the user's AI only
+    if (!r.enabled) run.checked.set(r.id, { rule_id: r.id, ran: false, reason: "disabled" });
+    else if (r.type === "builtin") run.checked.set(r.id, { rule_id: r.id, ran: false, reason: "not_implemented" });
+    else if (r.type === "file" && r.git === "tracked" && !run.git.isRepo) run.checked.set(r.id, { rule_id: r.id, ran: false, reason: "not_git_repo" });
+    else {
+      run.checked.set(r.id, { rule_id: r.id, ran: true });
+      if (!r.when || files.some((f) => !f.build && matchGlob(r.when!, f.rel))) active.push(r);
+    }
+  }
+  await run.textRules(
+    active.filter((r): r is PatternRule => r.type === "pattern"),
+    active.filter((r): r is ConfigRule => r.type === "config"),
+  );
+  for (const r of active) if (r.type === "file") await run.fileRule(r);
+
+  let findings = run.finish();
+  if (opts.ignores !== false) {
+    const ignored = new Set((await listIgnores(root, opts.appDir ?? defaultAppDir())).map((e) => e.id));
+    const before = findings.length;
+    findings = findings.filter((f) => !ignored.has(f.id));
+    run.stats.ignored = before - findings.length;
+  }
+  return {
+    engine_version: ENGINE_VERSION,
+    template_id: template.id,
+    findings,
+    checked: template.rules.flatMap((r) => run.checked.get(r.id) ?? []),
+    stats: run.stats,
+  };
+}
+
+interface AddArgs {
+  rule: Exclude<Rule, { type: "builtin" | "ai_check" }>;
+  file: string | null;
+  line: number | null;
+  valueHash: string;
+  severity: Severity;
+  confidence: Confidence;
+  notes: NoteCode[];
+  masked?: string;
+  secret?: boolean;
+  build?: boolean;
+}
+
+class Run {
+  readonly checked = new Map<string, CheckedRule>();
+  readonly stats: ScanStats = {
+    files: 0,
+    skipped: { too_large: 0, binary: 0, utf16: 0, long_line: 0, unreadable: 0, parse_error: 0 },
+    allowed_public_keys: 0,
+    ignored: 0,
+    timed_out: [],
+  };
+  private readonly findings = new Map<string, Finding>();
+  private readonly buildIds = new Set<string>();
+  private readonly envStates = new Map<string, Promise<"unknown" | "local-only" | "normal">>();
+
+  constructor(
+    readonly root: string,
+    readonly files: FileEntry[],
+    readonly git: GitInfo,
+    readonly lang: Lang,
+  ) {
+    this.stats.files = files.length;
+  }
+
+  async textRules(patterns: PatternRule[], configs: ConfigRule[]): Promise<void> {
+    // Config `review` regexes run in the worker too (spec slots after the pattern rules).
+    const runner = new RegexRunner([
+      ...patterns.map((r) => ({ match: r.match, review: r.review, allow: r.allow })),
+      ...configs.map((r) => ({ match: r.review, review: [], allow: [] })),
+    ]);
+    const spent = new Map<number, number>();
+    const over = new Set<number>();
+    const partial = new Set<number>();
+    const requireSeen = new Map<number, string>();
+    const requireHit = new Set<number>();
+    // Value rules first so the late rules can skip lines they already decided (§6-4).
+    const late = (k: number): number => Number(LATE_RULES.has(patterns[k]!.id));
+    try {
+      for (const f of this.files) {
+        const pIdx = patterns.flatMap((r, k) => (!over.has(k) && applies(r, f) ? [k] : [])).sort((a, b) => late(a) - late(b));
+        const cIdx = configs.flatMap((r, k) => (applies(r, f) ? [k] : []));
+        if (pIdx.length === 0 && cIdx.length === 0) continue;
+        const t = await readText(f.abs);
+        if ("skip" in t) {
+          this.stats.skipped[t.skip]++;
+          continue;
+        }
+        if (pIdx.length) {
+          const res = await runner.run(t.text, pIdx);
+          for (const [k, ms] of res.ms) {
+            const total = (spent.get(k) ?? 0) + ms;
+            spent.set(k, total);
+            if (total > RULE_TOTAL_LIMIT_MS) over.add(k);
+          }
+          for (const k of res.timedOut) {
+            partial.add(k);
+            this.stats.timed_out.push({ rule_id: patterns[k]!.id, file: f.rel });
+          }
+          const occupied = new Set<number>();
+          for (const k of pIdx) {
+            const rule = patterns[k]!;
+            const found = res.matches.get(k);
+            if (!found) continue;
+            if (rule.mode === "require") {
+              if (!requireSeen.has(k)) requireSeen.set(k, f.rel);
+              if (found.length) requireHit.add(k);
+              continue;
+            }
+            for (const m of found) await this.patternMatch(rule, f, t.text, m, occupied);
+          }
+        }
+        for (const k of cIdx) await this.configMatch(configs[k]!, f, t.text, runner, patterns.length + k);
+      }
+    } finally {
+      runner.close();
+    }
+    // A .gitignore above CWD (monorepo subfolder) can cover the .env files: ask git.
+    const envFiles = this.files.filter((f) => !f.build && isEnvFile(f.rel)).map((f) => f.rel);
+    const envIgnored =
+      patterns.some((r) => r.id === "gitignore-env-missing") &&
+      envFiles.length > 0 &&
+      (await this.git.ignored(envFiles)).size === envFiles.length;
+    patterns.forEach((rule, k) => {
+      if (over.has(k) || partial.has(k)) {
+        this.checked.set(rule.id, { rule_id: rule.id, ran: true, reason: over.has(k) ? "timeout" : "timeout_partial" });
+      }
+      // A required pattern missing everywhere is the finding — unless a timeout makes that unknowable.
+      if (rule.mode === "require" && !requireHit.has(k) && !over.has(k) && !partial.has(k)) {
+        if (rule.id === "gitignore-env-missing" && envIgnored) return;
+        this.add({
+          rule, file: requireSeen.get(k) ?? literalPath(rule.files[0]), line: null, valueHash: sha256(""),
+          severity: rule.severity, confidence: "confirmed", notes: [],
+        });
+      }
+    });
+  }
+
+  private async patternMatch(rule: PatternRule, f: FileEntry, text: string, m: RawMatch, occupied: Set<number>): Promise<void> {
+    const secret = isSecretRule(rule);
+    const isLate = LATE_RULES.has(rule.id);
+    const line = lineAt(text, m.index);
+    if (isLate && occupied.has(line)) return;
+    // Settings mentioned in comments are not in effect; secrets in comments still leak.
+    if (!secret && /^\s*(#|\/\/|\/\*|\*|<!--|;|!)/.test(lineTextAt(text, m.index))) return;
+    let value = m.value;
+    let severity = rule.severity;
+    let confidence: Confidence = m.review ? "review" : "confirmed";
+    const notes: NoteCode[] = [];
+    if (secret && !isLate) {
+      if (isPlaceholder(value)) return;
+      const verdict = allowlisted(value, text.slice(Math.max(0, m.index - 600), m.index + value.length + 600));
+      if (verdict === "public") {
+        this.stats.allowed_public_keys++;
+        occupied.add(line);
+        return;
+      }
+      if (verdict === "legacy_anon") {
+        confidence = "info";
+        notes.push("legacy_anon_key");
+      } else if (rule.jwt_claims) {
+        const claims = decodeJwtPayload(value);
+        if (claims && !Object.entries(rule.jwt_claims).every(([k, v]) => claims[k] === v)) return;
+      }
+    }
+    const refine = REFINERS[rule.id];
+    if (refine) {
+      const r = refine({ file: f, text, value, index: m.index, lineText: lineTextAt(text, m.index), severity, confidence, files: this.files });
+      if (!r) return;
+      severity = r.severity;
+      confidence = lower(confidence, r.confidence);
+      notes.push(...(r.notes ?? []));
+      value = r.value ?? value;
+    }
+    confidence = await this.adjustByPath(f.rel, confidence, secret ? (isLate ? "late" : "value") : "other", notes);
+    if (secret && !isLate) occupied.add(line);
+    this.add({
+      rule, file: f.rel, line, valueHash: sha256(value), severity, confidence, notes, masked: mask(value), secret, build: f.build,
+    });
+  }
+
+  private async configMatch(rule: ConfigRule, f: FileEntry, text: string, runner: RegexRunner, slot: number): Promise<void> {
+    let data: unknown;
+    try {
+      data = parseConfig(rule.format, text);
+    } catch {
+      this.stats.skipped.parse_error++;
+      return;
+    }
+    const v = configValue(rule.format, data, rule.key);
+    if (v === undefined || v === null || typeof v === "object") return;
+    const sv = String(v);
+    let confidence: Confidence = "confirmed";
+    if (sv !== String(rule.equals)) {
+      if (rule.review.length === 0 || !(await runner.run(sv, [slot])).matches.get(slot)?.length) return;
+      confidence = "review";
+    }
+    const last = rule.key.split(".").pop()!;
+    const idx = text.split("\n").findIndex((l) => l.includes(rule.format === "dotenv" || rule.format === "properties" ? rule.key : last));
+    const notes: NoteCode[] = [];
+    confidence = await this.adjustByPath(f.rel, confidence, "other", notes);
+    const value = `${rule.key}=${sv}`;
+    this.add({
+      rule, file: f.rel, line: idx >= 0 ? idx + 1 : null, valueHash: sha256(value), severity: rule.severity, confidence, notes, masked: mask(value),
+    });
+  }
+
+  async fileRule(rule: FileRule): Promise<void> {
+    const inScope = (rel: string): boolean => matchAny(rule.files, rel) && !matchAny(rule.exclude, rel);
+    const onDisk = new Set(this.files.filter((f) => inScope(f.rel)).map((f) => f.rel));
+    let paths = [...onDisk];
+    if (rule.git === "tracked") {
+      paths = paths.filter((p) => this.git.tracked.has(p));
+      if (rule.content_check) {
+        // §6-5 env-committed: tracked now, or present anywhere in history (all refs).
+        const hist = await this.git.historyPaths(rule.files.flatMap(globToPathspecs));
+        for (const p of [...hist].sort()) if (inScope(p) && !isSkippedPath(p) && !paths.includes(p)) paths.push(p);
+      }
+    }
+    if (rule.expect === "present") {
+      if (paths.length === 0) {
+        this.add({
+          rule, file: literalPath(rule.files[0]), line: null, valueHash: sha256(""), severity: rule.severity, confidence: "confirmed", notes: [],
+        });
+      }
+      return;
+    }
+    let hidden: boolean | undefined;
+    for (const p of paths) {
+      const notes: NoteCode[] = [];
+      let confidence: Confidence = "confirmed";
+      let valueHash: string;
+      let content: Buffer | null = null;
+      if (onDisk.has(p)) {
+        valueHash = await hashFile(join(this.root, p));
+        if (rule.content_check) content = await readTextBuffer(join(this.root, p));
+      } else {
+        content = await this.git.lastHistoryContent(p);
+        valueHash = sha256(content ?? "");
+      }
+      if (rule.git === "tracked" && !this.git.tracked.has(p)) notes.push("history_only");
+      if (rule.content_check && content) {
+        const t = decode(content);
+        if ("text" in t && envHasOnlyPublicValues(parseDotenv(t.text))) {
+          confidence = "info";
+          notes.push("public_values_only");
+        }
+      }
+      if (rule.id === "sourcemap-in-build") {
+        hidden ??= await this.anyHiddenSourcemapConfig();
+        const nextDir = /^(.*\/)?\.next\/static\//.exec(p);
+        if (hidden) {
+          confidence = "info";
+          notes.push("hidden_sourcemap");
+        } else if (nextDir && this.files.some((f) => f.rel.startsWith(`${nextDir[0]}development/`))) {
+          confidence = "info";
+          notes.push("dev_build");
+        }
+      }
+      if (isTestPath(p) && CONF_RANK[confidence] < CONF_RANK.review) {
+        confidence = "review";
+        notes.push("test_path");
+      }
+      this.add({ rule, file: p, line: null, valueHash, severity: rule.severity, confidence, notes });
+    }
+  }
+
+  private async anyHiddenSourcemapConfig(): Promise<boolean> {
+    for (const f of this.files) {
+      if (f.build || !/(^|\/)(vite|webpack|next)\.config\.[cm]?[jt]s$/.test(f.rel)) continue;
+      const t = await readText(f.abs);
+      if ("text" in t && hiddenSourcemapConfig(f.rel, t.text)) return true;
+    }
+    return false;
+  }
+
+  /** §5 path classes: local-only .env* → info, example/doc → info, test paths → review. Only ever lowers. */
+  private async adjustByPath(rel: string, conf: Confidence, kind: "value" | "late" | "other", notes: NoteCode[]): Promise<Confidence> {
+    const to = (target: Confidence, note: NoteCode | null): void => {
+      if (CONF_RANK[target] > CONF_RANK[conf]) {
+        conf = target;
+        if (note) notes.push(note);
+      }
+    };
+    if (kind === "value" && isEnvFile(rel)) {
+      const st = await this.envState(rel);
+      if (st === "local-only") to("info", "local_only_env");
+      else if (st === "unknown") to("review", null); // not a git repo: tracking unknown
+    }
+    if (kind !== "late" && isExampleOrDoc(rel)) to("info", "example_or_doc");
+    if (isTestPath(rel)) to("review", "test_path");
+    return conf;
+  }
+
+  /** H5: a .env* that is gitignored, untracked and never in history is a local-only file. */
+  private envState(rel: string): Promise<"unknown" | "local-only" | "normal"> {
+    let p = this.envStates.get(rel);
+    if (!p) {
+      p = (async () => {
+        if (!this.git.isRepo) return "unknown";
+        if (this.git.tracked.has(rel)) return "normal";
+        if ((await this.git.historyPaths([":(glob)**/.env*"])).has(rel)) return "normal";
+        return (await this.git.ignored([rel])).has(rel) ? "local-only" : "normal";
+      })();
+      this.envStates.set(rel, p);
+    }
+    return p;
+  }
+
+  add(a: AddArgs): void {
+    const id = fingerprint(a.rule.id, a.file ?? "", a.valueHash);
+    const prev = this.findings.get(id);
+    if (prev && (prev.location?.line ?? 0) <= (a.line ?? 0)) return; // keep the first occurrence
+    const name = a.rule.name;
+    this.findings.set(id, {
+      id,
+      rule_id: a.rule.id,
+      severity: a.severity,
+      confidence: a.confidence,
+      title: name?.[this.lang] ?? name?.en ?? name?.ko ?? a.rule.id,
+      location: a.file === null ? null : { file: a.file, line: a.line },
+      ...(a.masked !== undefined && { masked_match: a.masked }),
+      ...(a.secret && { secret_kind: a.rule.id }),
+      value_hash: a.valueHash,
+      source: "local",
+      ...(a.notes.length && { notes: [...new Set(a.notes)] }),
+    });
+    if (a.build) this.buildIds.add(id);
+    else this.buildIds.delete(id);
+  }
+
+  finish(): Finding[] {
+    // §5: a secret in source and in the browser build is one source finding + "also in build output".
+    const source = new Map<string, Finding>();
+    for (const f of this.findings.values()) if (!this.buildIds.has(f.id)) source.set(`${f.rule_id}\0${f.value_hash}`, f);
+    for (const id of this.buildIds) {
+      const b = this.findings.get(id)!;
+      const s = source.get(`${b.rule_id}\0${b.value_hash}`);
+      if (s && s.secret_kind) {
+        this.findings.delete(id);
+        s.notes = [...new Set([...(s.notes ?? []), "in_build_output" as const])];
+      }
+    }
+    return [...this.findings.values()].sort(
+      (a, b) =>
+        CONF_RANK[a.confidence] - CONF_RANK[b.confidence] ||
+        SEV_RANK[a.severity] - SEV_RANK[b.severity] ||
+        cmp(a.location?.file ?? "", b.location?.file ?? "") ||
+        (a.location?.line ?? 0) - (b.location?.line ?? 0) ||
+        cmp(a.rule_id, b.rule_id) ||
+        cmp(a.id, b.id),
+    );
+  }
+}
+
+function hashFile(abs: string): Promise<string> {
+  return new Promise((res) => {
+    const h = createHash("sha256");
+    createReadStream(abs)
+      .on("data", (c) => h.update(c))
+      .on("end", () => res(h.digest("hex")))
+      .on("error", () => res(sha256("")));
+  });
+}
+
+async function readTextBuffer(abs: string): Promise<Buffer | null> {
+  try {
+    return (await stat(abs)).size > MAX_FILE_BYTES ? null : await readFile(abs);
+  } catch {
+    return null;
+  }
+}
