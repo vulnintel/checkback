@@ -6,5 +6,6 @@ export { addIgnore, removeIgnore, listIgnores, type IgnoreEntry } from "./ignore
 export { defaultAppDir } from "./appdata.js";
 export { readInventory, lookupScope, type Inventory, type Lockfile, type Manifest, type PrivateConfig, type LookupScope, type LookupTarget } from "./deps/inventory.js";
 export { buildSbom, purlOf, type SbomOptions } from "./deps/sbom.js";
+export { fixPromptText, fixPromptsForIds, aiCheckPromptText, aiCheckPromptForProject, PromptError, MAX_BATCH, type GeneratedPrompt } from "./prompts.js";
 export type { Package, Ecosystem } from "./deps/locks.js";
 export type * from "./types.js";
