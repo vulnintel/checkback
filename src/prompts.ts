@@ -68,7 +68,8 @@ function ruleName(f: StoredFinding, tpl: Template, lang: Lang): string {
   return clean(pick(t, lang) ?? f.rule_id, 120);
 }
 
-const needsRevoke = (f: StoredFinding): boolean =>
+/** The finding needs a person to revoke and reissue a key first (S9 checklist, prompt "do first"). */
+export const needsRevoke = (f: StoredFinding): boolean =>
   !!f.secret_kind || f.rule_id === "key-file-committed" || (f.rule_id === "env-committed" && !f.notes?.includes("public_values_only"));
 
 function vars(f: StoredFinding, tpl: Template, lang: Lang): Record<string, string> {
@@ -221,6 +222,8 @@ export async function fixPromptsForIds(cwd: string, ids: string[], tpl: Template
   return prompt;
 }
 
-export async function aiCheckPromptForProject(cwd: string, tpl: Template, lang: Lang, appDir = defaultAppDir()): Promise<GeneratedPrompt | null> {
-  return aiCheckPromptText(tpl, (await readLastScan(cwd, appDir))?.findings ?? [], lang);
+export async function aiCheckPromptForProject(
+  cwd: string, tpl: Template, lang: Lang, appDir = defaultAppDir(), isExternal?: (r: AiCheckRule) => boolean,
+): Promise<GeneratedPrompt | null> {
+  return aiCheckPromptText(tpl, (await readLastScan(cwd, appDir))?.findings ?? [], lang, isExternal);
 }

@@ -3,8 +3,6 @@
 // ignores, consents, watches, runs an AI or stores AI judgments (§4, N2). Responses never carry
 // secret values, masked values or file contents (§10-3).
 
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
 import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
 import { apiKeyOf, defaultAppDir, hasConsent, readConfig } from "./appdata.js";
@@ -16,7 +14,8 @@ import { CONSENT_HOWTO, DATA_TABLE, DISCLAIMER, KEY_NOTICE, osLang, PARTIAL_NOTI
 import { aiCheckPromptForProject, fixPromptsForIds, MAX_BATCH } from "./prompts.js";
 import { readLastScan, type Compare } from "./recheck.js";
 import { scan } from "./scan.js";
-import { loadDefaultTemplate, loadTemplate } from "./template.js";
+import { loadDefaultTemplate } from "./template.js";
+import { aiExternal, loadTemplateById, StoreError } from "./template-store.js";
 import type { CheckedRule, Finding, Lang, Template } from "./types.js";
 
 const PROTOCOLS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
@@ -90,12 +89,10 @@ const TOOLS = [
 class ToolError extends Error {}
 
 async function templateById(id: string | undefined, appDir: string): Promise<Template> {
-  if (!id || id === "default") return loadDefaultTemplate();
-  if (!/^[a-z0-9-]{1,64}$/.test(id)) throw new ToolError("invalid template id");
   try {
-    return await loadTemplate(await readFile(join(appDir, "templates", `${id}.yaml`)));
+    return await loadTemplateById(id, appDir);
   } catch (e) {
-    throw new ToolError(`template ${id} could not be loaded: ${(e as Error).message.split("\n")[0]}`);
+    throw new ToolError(e instanceof StoreError && e.code === "invalid" ? "invalid template id" : `template ${id} could not be loaded: ${(e as Error).message.split("\n")[0]}`);
   }
 }
 
@@ -158,7 +155,7 @@ export function createMcpHandler(o: McpOptions): (msg: unknown) => Promise<unkno
       const last = await readLastScan(o.cwd, appDir);
       const tpl = await templateById(last?.template_id, appDir).catch(() => loadDefaultTemplate());
       const l = await lang();
-      const p = await aiCheckPromptForProject(o.cwd, tpl, l, appDir);
+      const p = await aiCheckPromptForProject(o.cwd, tpl, l, appDir, await aiExternal(appDir, tpl));
       return p?.text ?? (l === "ko" ? "켜진 AI 점검 항목이 없습니다. `npx checkback` 화면의 템플릿에서 AI 점검 항목을 켜세요." : "No AI check items are enabled. Turn them on in the template screen of `npx checkback`.");
     },
   };

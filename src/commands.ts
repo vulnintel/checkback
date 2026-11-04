@@ -96,15 +96,21 @@ export async function watchCommand(io: TtyIO, o: CommandOptions): Promise<number
   }
 }
 
-async function watch(io: TtyIO, o: CommandOptions, ask: (q: string) => Promise<string>): Promise<number> {
-  const ctx = await keyContext(io, o);
-  if (!ctx) return 1;
-  const ko = o.lang === "ko";
-  const inv = await readInventory(o.cwd);
+export interface WatchCandidate {
+  eco: "npm" | "PyPI";
+  name: string;
+  key: string;
+  direct: boolean;
+  vuln: boolean;
+}
+
+/** S3a list: public locked packages, direct first, vulnerable first; `defaults` = how many are pre-selected. */
+export async function watchCandidates(cwd: string, appDir: string): Promise<{ cands: WatchCandidate[]; defaults: number }> {
+  const inv = await readInventory(cwd);
   const direct = new Set(inv.lockfiles.flatMap((l) => l.packages.filter((p) => p.direct).map((p) => `${p.ecosystem}:${p.name}`)));
   const locks = new Set(inv.lockfiles.map((l) => l.path));
   const vulnerable = new Set(
-    ((await readLastScan(o.cwd, ctx.appDir))?.findings ?? []).filter((f) => f.rule_id === "vulnerable-deps" && f.package).map((f) => `${f.ecosystem}:${f.package}`),
+    ((await readLastScan(cwd, appDir))?.findings ?? []).filter((f) => f.rule_id === "vulnerable-deps" && f.package).map((f) => `${f.ecosystem}:${f.package}`),
   );
   const seen = new Set<string>();
   const cands = lookupScope(inv)
@@ -113,11 +119,18 @@ async function watch(io: TtyIO, o: CommandOptions, ask: (q: string) => Promise<s
     .filter((c) => !seen.has(c.key) && seen.add(c.key))
     .map((c) => ({ ...c, direct: direct.has(c.key), vuln: vulnerable.has(c.key) }))
     .sort((a, b) => Number(b.direct) - Number(a.direct) || Number(b.vuln) - Number(a.vuln) || (a.key < b.key ? -1 : 1));
+  return { cands, defaults: cands.slice(0, WATCH_DEFAULT).filter((c) => c.direct).length };
+}
+
+async function watch(io: TtyIO, o: CommandOptions, ask: (q: string) => Promise<string>): Promise<number> {
+  const ctx = await keyContext(io, o);
+  if (!ctx) return 1;
+  const ko = o.lang === "ko";
+  const { cands, defaults } = await watchCandidates(o.cwd, ctx.appDir);
   if (cands.length === 0) {
     io.output.write(ko ? "감시할 공개 패키지가 없습니다(lock 파일 필요).\n" : "No public locked packages to watch (a lock file is needed).\n");
     return 1;
   }
-  const defaults = cands.slice(0, WATCH_DEFAULT).filter((c) => c.direct).length;
   io.output.write(
     `${cands
       .map((c, i) => `${String(i + 1).padStart(3)}) ${i < defaults ? "[*]" : "[ ]"} ${c.eco} ${c.name}${c.direct ? (ko ? " · 직접" : " · direct") : ""}${c.vuln ? (ko ? " · 취약" : " · vulnerable") : ""}`)
@@ -132,30 +145,7 @@ async function watch(io: TtyIO, o: CommandOptions, ask: (q: string) => Promise<s
   if (/^q/i.test(answer)) return 1;
   const picked = (answer ? parseSelection(answer, cands.length) : cands.slice(0, defaults).map((_, i) => i)).slice(0, WATCH_MAX).map((i) => cands[i]!);
   if (picked.length === 0) return 1;
-
-  const http = defaultHttp(o.fetch);
-  const budget = new ViBudget(ctx.appDir, { keyMode: true });
-  const res: WatchResult = { created: [], already: [], no_data: [], not_done: [] };
-  for (let i = 0; i < picked.length; i++) {
-    const c = picked[i]!;
-    let r = await createSubscription(http, budget, ctx.key, c.eco, c.name);
-    if (!r.ok && r.error.kind === "rate_limited") {
-      await http.sleep(Math.min(r.error.retryAfterMs, 60_000) + 100); // budget is blocked for exactly Retry-After
-      r = await createSubscription(http, budget, ctx.key, c.eco, c.name);
-    }
-    if (r.ok) res.created.push(c.key);
-    else if (r.error.kind === "conflict") res.already.push(c.key);
-    else if (r.error.kind === "not_found") res.no_data.push(c.key);
-    else {
-      res.stopped = r.error.kind;
-      if (r.error.kind === "subscription_limit") res.limit = r.error.limit;
-      res.not_done.push(...picked.slice(i).map((x) => x.key));
-      break;
-    }
-  }
-  const file = join(ctx.appDir, "watch", `${projectKey(await realpath(resolve(o.cwd)))}.json`);
-  const prev = await readJson<{ names?: string[] }>(file, {});
-  await writeJson(file, { names: [...new Set([...(prev.names ?? []), ...res.created, ...res.already])].sort() });
+  const res = await subscribePackages(o.cwd, ctx.appDir, ctx.key, picked, o.fetch);
   io.output.write(
     ko
       ? `새로 감시 ${res.created.length} · 이미 감시 중 ${res.already.length} · 데이터 없음 ${res.no_data.length} · 못 함 ${res.not_done.length}\n`
@@ -167,6 +157,35 @@ async function watch(io: TtyIO, o: CommandOptions, ask: (q: string) => Promise<s
     io.output.write(ko ? `중단: ${res.stopped}\n` : `Stopped: ${res.stopped}\n`);
   }
   return res.stopped && res.stopped !== "subscription_limit" ? 1 : 0;
+}
+
+/** POST /subscriptions one by one (§8-3-6): ecosystem + name only, at most 50. Stops at the plan limit. */
+export async function subscribePackages(cwd: string, appDir: string, key: string, picked: WatchCandidate[], fetch?: Fetch): Promise<WatchResult> {
+  const http = defaultHttp(fetch);
+  const budget = new ViBudget(appDir, { keyMode: true });
+  const res: WatchResult = { created: [], already: [], no_data: [], not_done: [] };
+  const list = picked.slice(0, WATCH_MAX);
+  for (let i = 0; i < list.length; i++) {
+    const c = list[i]!;
+    let r = await createSubscription(http, budget, key, c.eco, c.name);
+    if (!r.ok && r.error.kind === "rate_limited") {
+      await http.sleep(Math.min(r.error.retryAfterMs, 60_000) + 100); // budget is blocked for exactly Retry-After
+      r = await createSubscription(http, budget, key, c.eco, c.name);
+    }
+    if (r.ok) res.created.push(c.key);
+    else if (r.error.kind === "conflict") res.already.push(c.key);
+    else if (r.error.kind === "not_found") res.no_data.push(c.key);
+    else {
+      res.stopped = r.error.kind;
+      if (r.error.kind === "subscription_limit") res.limit = r.error.limit;
+      res.not_done.push(...list.slice(i).map((x) => x.key));
+      break;
+    }
+  }
+  const file = join(appDir, "watch", `${projectKey(await realpath(resolve(cwd)))}.json`);
+  const prev = await readJson<{ names?: string[] }>(file, {});
+  await writeJson(file, { names: [...new Set([...(prev.names ?? []), ...res.created, ...res.already])].sort() });
+  return res;
 }
 
 /**
@@ -187,41 +206,68 @@ async function track(io: TtyIO, o: CommandOptions, ask: (q: string) => Promise<s
   const ctx = await keyContext(io, o);
   if (!ctx) return 1;
   const ko = o.lang === "ko";
-  const rows = ((await readLastScan(o.cwd, ctx.appDir))?.findings ?? [])
-    .filter((f) => f.rule_id === "vulnerable-deps" && f.package && f.version)
-    .flatMap((f) => (f.vuln_ids ?? []).filter((v) => /^CVE-\d{4}-\d{4,}$/.test(v)).map((cve) => ({ cve, pkg: f.package!, version: f.version! })));
-  const unique = [...new Map(rows.map((r) => [r.cve, r])).values()];
+  const unique = await trackRows(o.cwd, ctx.appDir);
   if (unique.length === 0) {
     io.output.write(ko ? "등록할 CVE가 없습니다(GHSA 전용 항목은 `checkback watch`로 패키지를 감시하세요).\n" : "No CVEs to register (for GHSA-only items, watch the package with `checkback watch`).\n");
     return 1;
   }
-  const http = defaultHttp(o.fetch);
-  const budget = new ViBudget(ctx.appDir, { keyMode: true });
-  const registered = new Set<string>();
-  for (let i = 0; i < unique.length; i += 100) {
-    const r = await listRemediations(http, budget, ctx.key, unique.slice(i, i + 100).map((u) => u.cve));
-    if (!r.ok) {
-      io.output.write(ko ? `조치 대장을 읽지 못했습니다: ${r.error.kind}\n` : `Could not read the remediation tracker: ${r.error.kind}\n`);
-      return 1;
-    }
-    const data = (r.value as { data?: unknown }).data;
-    for (const it of Array.isArray(data) ? data : []) if (typeof it?.cve_id === "string") registered.add(it.cve_id.toUpperCase());
+  const reg = await registeredCves(ctx.appDir, ctx.key, unique.map((u) => u.cve), o.fetch);
+  if (!reg.ok) {
+    io.output.write(ko ? `조치 대장을 읽지 못했습니다: ${reg.kind}\n` : `Could not read the remediation tracker: ${reg.kind}\n`);
+    return 1;
   }
+  const registered = reg.set;
   io.output.write(`${unique.map((u, i) => `${String(i + 1).padStart(3)}) ${u.cve} · ${u.pkg}@${u.version}${registered.has(u.cve) ? (ko ? " · 등록됨" : " · registered") : ""}`).join("\n")}\n`);
   const answer = await ask(ko ? "등록할 번호(예: 1,3 · all · q=취소): " : "Numbers to register (e.g. 1,3 · all · q=cancel): ");
   if (!answer || /^q/i.test(answer)) return 1;
   const picked = (/^all$/i.test(answer) ? unique.map((_, i) => i) : parseSelection(answer, unique.length)).map((i) => unique[i]!).filter((u) => !registered.has(u.cve));
-  let ok = 0;
-  for (const u of picked) {
-    const r = await putRemediation(http, budget, ctx.key, u.cve, u.pkg, u.version);
-    if (r.ok) ok++;
-    else {
-      io.output.write(ko ? `중단: ${u.cve} — ${r.error.kind}\n` : `Stopped: ${u.cve} — ${r.error.kind}\n`);
-      break;
-    }
-  }
-  io.output.write(ko ? `조치 대장 등록 ${ok}건 · ${web(o.lang, "/settings/remediations")}\n` : `Registered ${ok} · ${web(o.lang, "/settings/remediations")}\n`);
+  const r = await registerCves(ctx.appDir, ctx.key, picked, o.fetch);
+  if (r.error) io.output.write(ko ? `중단: ${r.error.cve} — ${r.error.kind}\n` : `Stopped: ${r.error.cve} — ${r.error.kind}\n`);
+  io.output.write(ko ? `조치 대장 등록 ${r.ok}건 · ${web(o.lang, "/settings/remediations")}\n` : `Registered ${r.ok} · ${web(o.lang, "/settings/remediations")}\n`);
   return 0;
+}
+
+export interface TrackRow {
+  cve: string;
+  pkg: string;
+  version: string;
+}
+
+/** CVE rows (GHSA-only items excluded) from the latest scan's vulnerable dependencies, one per CVE. */
+export async function trackRows(cwd: string, appDir: string): Promise<TrackRow[]> {
+  const rows = ((await readLastScan(cwd, appDir))?.findings ?? [])
+    .filter((f) => f.rule_id === "vulnerable-deps" && f.package && f.version)
+    .flatMap((f) => (f.vuln_ids ?? []).filter((v) => /^CVE-\d{4}-\d{4,}$/.test(v)).map((cve) => ({ cve, pkg: f.package!, version: f.version! })));
+  return [...new Map(rows.map((r) => [r.cve, r])).values()];
+}
+
+/** CVEs already in the remediation tracker: one list call per 100 (§8-3-4). */
+export async function registeredCves(
+  appDir: string, key: string, cves: string[], fetch?: Fetch,
+): Promise<{ ok: true; set: Set<string> } | { ok: false; kind: KeyError["kind"] }> {
+  const http = defaultHttp(fetch);
+  const budget = new ViBudget(appDir, { keyMode: true });
+  const set = new Set<string>();
+  for (let i = 0; i < cves.length; i += 100) {
+    const r = await listRemediations(http, budget, key, cves.slice(i, i + 100));
+    if (!r.ok) return { ok: false, kind: r.error.kind };
+    const data = (r.value as { data?: unknown }).data;
+    for (const it of Array.isArray(data) ? data : []) if (typeof it?.cve_id === "string") set.add(it.cve_id.toUpperCase());
+  }
+  return { ok: true, set };
+}
+
+/** Register rows (callers drop already-registered ones — never overwrite); stops at the first error. */
+export async function registerCves(appDir: string, key: string, rows: TrackRow[], fetch?: Fetch): Promise<{ ok: number; error?: { cve: string; kind: KeyError["kind"] } }> {
+  const http = defaultHttp(fetch);
+  const budget = new ViBudget(appDir, { keyMode: true });
+  let ok = 0;
+  for (const u of rows) {
+    const r = await putRemediation(http, budget, key, u.cve, u.pkg, u.version);
+    if (!r.ok) return { ok, error: { cve: u.cve, kind: r.error.kind } };
+    ok++;
+  }
+  return { ok };
 }
 
 /** `checkback ignore` / `checkback ignore --remove`: the local ignore list (§5), person only. */

@@ -176,7 +176,9 @@ describe("AC68 no AI process execution path", () => {
     for (const f of files) {
       const t = readFileSync(f, "utf8");
       expect(t, f).not.toMatch(/\bclaude\b\s*["',)]/i);
-      for (const m of t.matchAll(/(?<![.\w])(execFile|spawn|exec|fork|execSync|spawnSync|execFileSync)\s*\(\s*([^,)]+)/g)) expect(m[2]!.trim(), f).toBe('"git"');
+      // Stage 7 (AC72): the GUI opens the default browser; its fixed command list is pinned in gui.test.ts.
+      const allowed = f.replace(/\\/g, "/").endsWith("src/gui/open.ts") ? ['"git"', "cmd"] : ['"git"'];
+      for (const m of t.matchAll(/(?<![.\w])(execFile|spawn|exec|fork|execSync|spawnSync|execFileSync)\s*\(\s*([^,)]+)/g)) expect(allowed, f).toContain(m[2]!.trim());
     }
   });
 });

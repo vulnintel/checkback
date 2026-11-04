@@ -1,0 +1,198 @@
+// S3 result (to-do list) and S4 details. The recheck comparison screen (summary of resolved /
+// remaining / new against the fix request) waits for experiment 1c; cards only show the
+// engine's per-item recheck status as it comes.
+
+import { api } from "../api.js";
+import { extLink, h, modal, replace } from "../dom.js";
+import { emptyKind } from "../empty.js";
+import { t } from "../i18n.js";
+import { go, report, S, type GFinding } from "../state.js";
+import { aiCheckDialog, fixDialog, ignoreDialog, pasteToAi, trackFinding, watchDialog } from "./dialogs.js";
+import { startScan } from "./start.js";
+
+const MAX_BATCH = 10;
+let updateBar: () => void = () => {};
+const loc = (f: GFinding): string => (f.location ? `${f.location.file}${f.location.line ? `:${f.location.line}` : ""}` : "");
+const cves = (f: GFinding): string[] => (f.vuln_ids ?? []).filter((v) => /^CVE-\d{4}-\d{4,}$/.test(v));
+
+function badges(f: GFinding): HTMLElement {
+  const c = t().card;
+  return h(
+    "div",
+    { class: "badges" },
+    h("span", { class: `sev sev-${f.severity}` }, t().result.sev[f.severity]),
+    f.recheck ? h("span", { class: `badge recheck-${f.recheck}` }, c.recheck[f.recheck] ?? f.recheck) : null,
+    f.kev ? h("span", { class: "badge kev" }, c.kev) : null,
+    f.vpi_level ? h("span", { class: `badge vpi vpi-${f.vpi_level}` }, c.vpi(f.vpi_level)) : null,
+    typeof f.epss === "number" ? h("span", { class: "badge" }, c.epss(Math.round(f.epss * 1000) / 10)) : null,
+    f.external_text ? h("span", { class: "badge ext" }, c.externalText) : null,
+  );
+}
+
+function card(f: GFinding, rerender: () => void): HTMLElement {
+  const c = t().card;
+  const sel = S.selected.has(f.id);
+  const ids = cves(f);
+  const trackBtn =
+    S.st!.key !== "none" && f.rule_id === "vulnerable-deps"
+      ? ids.length === 0
+        ? h("span", { class: "muted small" }, c.ghsaOnly)
+        : ids.every((x) => S.tracked?.get(x))
+          ? h("span", { class: "muted small" }, c.tracked)
+          : h("button", { class: "btn", type: "button", onclick: () => void trackFinding(ids, rerender) }, c.track)
+      : null;
+  return h(
+    "article",
+    { class: `card${sel ? " selected" : ""}`, "aria-label": f.title },
+    h(
+      "div",
+      { class: "card-head" },
+      f.carried
+        ? null
+        : h("input", {
+            type: "checkbox",
+            checked: sel,
+            "aria-label": t().result.select(f.title),
+            onchange: (e: Event) => {
+              const box = e.target as HTMLInputElement;
+              if (box.checked) S.selected.add(f.id);
+              else S.selected.delete(f.id);
+              box.closest(".card")?.classList.toggle("selected", box.checked);
+              updateBar(); // keep keyboard focus on the checkbox: no full re-render
+            },
+          }),
+      badges(f),
+    ),
+    h("h3", { class: "card-title" }, f.title),
+    f.package ? h("p", { class: "card-pkg" }, c.pkg(f.package, f.version ?? "", f.fixed_version)) : null,
+    f.summary && f.summary !== f.title ? h("p", { class: "card-sum" }, f.summary) : null,
+    loc(f) ? h("p", { class: "loc" }, loc(f)) : null,
+    h(
+      "div",
+      { class: "card-actions" },
+      f.carried ? null : h("button", { class: "btn primary", type: "button", onclick: () => void pasteToAi([f]) }, c.paste),
+      h("button", { class: "btn", type: "button", onclick: () => detailDialog(f) }, c.details),
+      f.carried ? null : h("button", { class: "btn", type: "button", onclick: () => ignoreDialog(f, rerender) }, c.ignore),
+      trackBtn,
+    ),
+  );
+}
+
+function dl(rows: [string, Node | string | null | undefined][]): HTMLElement {
+  return h("dl", { class: "kv" }, rows.filter(([, v]) => v !== null && v !== undefined && v !== "").flatMap(([k, v]) => [h("dt", {}, k), h("dd", {}, v)]));
+}
+
+/** S4 */
+export function detailDialog(f: GFinding): void {
+  const d = t().detail;
+  const preview = h("pre", { class: "prompt" }, t().loading);
+  const pkg = f.package ? `${f.package}${f.version ? `@${f.version}` : ""}` : null;
+  modal(
+    f.title,
+    [
+      badges(f),
+      h("h3", {}, d.why),
+      h("p", {}, f.description || f.summary),
+      f.recheck_note ? h("p", { class: "note" }, h("strong", {}, `${d.recheckWhy}: `), d.recheckNote[f.recheck_note] ?? f.recheck_note) : null,
+      dl([
+        [d.where, loc(f) || null],
+        [d.related, f.related?.length ? f.related.join(", ") : null],
+        [d.masked, f.masked_match ?? null],
+        [d.rule, `${f.name} (${f.rule_id}) · ${t().card.conf[f.confidence]}`],
+        [d.pkg, pkg],
+        [d.fixed, f.package ? (f.fixed_version ?? d.noFix) : null],
+        [d.vuln, f.vuln_ids?.length ? f.vuln_ids.join(", ") : null],
+        [d.cvss, typeof f.cvss === "number" ? String(f.cvss) : null],
+        [d.lock, f.lockfile ?? null],
+        [d.source, d.sources[f.source] ?? f.source],
+      ]),
+      f.notes?.length ? h("ul", { class: "notes" }, f.notes.map((n) => h("li", {}, d.note[n] ?? n))) : null,
+      f.carried ? null : h("h3", {}, d.preview),
+      f.carried ? null : preview,
+    ],
+    f.carried ? [] : [h("button", { class: "btn primary", type: "button", onclick: () => void pasteToAi([f]) }, t().card.paste)],
+    true,
+  );
+  if (!f.carried)
+    api<{ text: string }>("POST", "/api/fix-prompt", { ids: [f.id] })
+      .then((r) => (preview.textContent = r.text))
+      .catch(report);
+}
+
+function emptyState(): HTMLElement | null {
+  const r = S.result!;
+  const tr = t().result;
+  const kind = emptyKind(r);
+  if (!kind) return null;
+  const [title, body] = kind === "nothing" ? [tr.nothingTitle, tr.nothingBody] : kind === "nolock" ? [tr.noLockTitle, tr.noLockBody] : [tr.cleanTitle, tr.cleanBody];
+  return h("div", { class: `empty ${kind}` }, h("h2", {}, title), h("p", {}, body));
+}
+
+export function resultView(): HTMLElement {
+  const r = S.result!;
+  const tr = t().result;
+  const root = h("section", { class: "result" });
+  const rerender = (): void => go("result");
+  const fix = r.findings.filter((f) => f.confidence === "confirmed");
+  const review = r.findings.filter((f) => f.confidence === "review");
+  const info = r.findings.filter((f) => f.confidence === "info");
+  const count = (s: string): number => fix.filter((f) => f.severity === s).length;
+
+  if (S.st!.key !== "none" && S.tracked === null && r.findings.some((f) => f.rule_id === "vulnerable-deps" && cves(f).length)) {
+    S.tracked = new Map();
+    api<{ rows: { cve: string; registered: boolean }[] }>("GET", "/api/track")
+      .then((x) => {
+        S.tracked = new Map(x.rows.map((row) => [row.cve, row.registered]));
+        if (S.view === "result") rerender();
+      })
+      .catch(() => {});
+  }
+
+  root.append(
+    h(
+      "div",
+      { class: "summary" },
+      h(
+        "div",
+        {},
+        h("h1", { tabindex: "-1" }, tr.fixCount(fix.length)),
+        h("p", { class: "sev-line" }, (["critical", "high", "medium"] as const).map((s) => h("span", { class: `sev sev-${s}` }, `${tr.sev[s]} ${count(s)}`))),
+        h("p", { class: "muted" }, `${tr.reviewCount(review.length)} · ${tr.infoCount(info.length)}`),
+        h("p", { class: "muted small" }, tr.meta(new Date(r.scan_at).toLocaleString(S.st!.lang), r.template.name, r.stats.files)),
+      ),
+      h(
+        "div",
+        { class: "summary-actions" },
+        h("button", { class: "btn", type: "button", disabled: r.ai_checks === 0, title: r.ai_checks === 0 ? tr.aiCheckOff : null, onclick: () => void aiCheckDialog(r.template.id) }, tr.aiCheck),
+        h("button", { class: "btn", type: "button", onclick: () => void watchDialog() }, tr.watch),
+      ),
+    ),
+    ...r.notices.map((x) => h("p", { class: "note" }, x)),
+  );
+
+  const empty = emptyState();
+  if (empty) root.append(empty);
+  if (fix.length) root.append(h("h2", { class: "sec" }, tr.secFix), h("div", { class: "cards" }, fix.map((f) => card(f, rerender))));
+  if (review.length) root.append(h("h2", { class: "sec" }, tr.secReview), h("p", { class: "muted small" }, tr.secReviewHint), h("div", { class: "cards" }, review.map((f) => card(f, rerender))));
+  if (info.length) root.append(h("details", { class: "fold" }, h("summary", {}, tr.secInfo(info.length)), h("div", { class: "cards" }, info.map((f) => card(f, rerender)))));
+  if (r.passed.length) root.append(h("details", { class: "fold" }, h("summary", {}, tr.passed(r.passed.length)), h("ul", { class: "plain" }, r.passed.map((p) => h("li", {}, p.name)))));
+  if (r.not_run.length)
+    root.append(h("details", { class: "fold" }, h("summary", {}, tr.notRun(r.not_run.length)), h("ul", { class: "plain" }, r.not_run.map((p) => h("li", {}, `${p.name} — ${tr.reason[p.reason] ?? p.reason}`)))));
+  if (S.st!.key === "none") root.append(h("p", { class: "upsell" }, `${tr.upsell} `, extLink(S.st!.links.key, tr.upsellLink)));
+
+  const bar = h("div", { class: "bar", role: "region", "aria-label": tr.rescan });
+  updateBar = () => {
+    const n = S.selected.size;
+    replace(
+      bar,
+      n ? h("span", { "aria-live": "polite" }, tr.selected(n)) : null,
+      n ? h("button", { class: "btn primary", type: "button", disabled: n > MAX_BATCH, onclick: () => void fixDialog([...S.selected]) }, tr.batch(n)) : null,
+      n > MAX_BATCH ? h("span", { class: "warn small" }, tr.batchMax(MAX_BATCH)) : null,
+      h("span", { class: "grow" }),
+      h("button", { class: "btn primary", type: "button", onclick: () => void startScan() }, tr.rescan),
+    );
+  };
+  updateBar();
+  root.append(bar);
+  return root;
+}

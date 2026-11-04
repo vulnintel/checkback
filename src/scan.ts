@@ -48,7 +48,13 @@ export interface ScanOptions {
   deadlineMs?: number;
   /** Key mode: ask VulnIntel again even if this exact SBOM already has a result ([다시 조회]). */
   refreshVulnIntel?: boolean;
+  /** GUI progress (S2): called as each phase starts; `files` is known from "rules" on. */
+  onPhase?: (phase: ScanPhase, files: number) => void;
+  /** GUI [중지]: checked between phases; an aborted scan rejects and stores nothing. */
+  signal?: AbortSignal;
 }
+
+export type ScanPhase = "files" | "rules" | "deps" | "external" | "finish";
 
 const CONF_RANK: Record<Confidence, number> = { confirmed: 0, review: 1, info: 2 };
 const SEV_RANK: Record<Severity, number> = { critical: 0, high: 1, medium: 2 };
@@ -71,7 +77,13 @@ export async function scan(cwd: string, template: Template, opts: ScanOptions = 
   const root = await realpath(resolve(cwd));
   const appDir = opts.appDir ?? defaultAppDir();
   const cfg = await readConfig(appDir);
+  const step = (p: ScanPhase, n = 0): void => {
+    opts.signal?.throwIfAborted();
+    opts.onPhase?.(p, n);
+  };
+  step("files");
   const files = await collectFiles(root);
+  step("rules", files.length);
   const run = new Run(root, files, await gitInfo(root), opts.lang ?? cfg.lang ?? "en", await installKey(appDir));
 
   const active: Rule[] = [];
@@ -94,10 +106,13 @@ export async function scan(cwd: string, template: Template, opts: ScanOptions = 
   );
   for (const r of active) if (r.type === "file") await run.fileRule(r);
   const now = (opts.now ?? Date.now)();
+  step("deps", files.length);
   const inv = await readInventory(root, files);
   const deadline = Date.now() + (opts.deadlineMs ?? Number.MAX_SAFE_INTEGER / 2);
+  step("external", files.length);
   await run.builtins(builtins, { cfg, appDir, fetch: opts.fetch, now, inv, deadline, refresh: !!opts.refreshVulnIntel });
 
+  step("finish", files.length);
   let findings = run.finish();
   const ignored = new Set(opts.ignores === false ? [] : (await listIgnores(root, appDir)).map((e) => e.id));
   const before = findings.length;
