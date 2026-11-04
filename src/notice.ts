@@ -41,3 +41,22 @@ export const DISCLAIMER: Record<Lang, string> = {
 export function osLang(): Lang {
   return Intl.DateTimeFormat().resolvedOptions().locale.toLowerCase().startsWith("ko") ? "ko" : "en";
 }
+
+/** One line about the key-mode VulnIntel scan (§8 failure table), or null. */
+export function viNotice(s: import("./builtins/vi-scan.js").ViScanStatus | undefined, lang: Lang): string | null {
+  if (!s) return null;
+  const ko = lang === "ko";
+  if (s.status === "ok" || s.status === "cached") return s.history_url ? (ko ? `VulnIntel 결과(웹 이력): ${s.history_url}` : `VulnIntel result (web history): ${s.history_url}`) : null;
+  if (s.status === "pending") return ko ? "VulnIntel 판정이 진행 중입니다 — 다시 scan하면 이어서 받습니다(이번 결과는 OSV 기준)." : "The VulnIntel check is still running — scan again to pick it up (this result uses OSV).";
+  if (s.reason === "invalid_key") return ko ? "VulnIntel 키가 유효하지 않습니다 — OSV 결과로 표시합니다. 감시 켜기·조치 대장은 쓸 수 없습니다." : "The VulnIntel key is invalid — showing OSV results. Watch and remediation tracking are unavailable.";
+  if (s.reason === "quota_exceeded" || s.reason === "quota_blocked") {
+    const reset = s.quota_reset ? (ko ? ` 초기화: ${s.quota_reset}` : ` Resets: ${s.quota_reset}`) : "";
+    return ko ? `이번 달 무료 판정 100건을 다 썼습니다 — OSV 결과로 표시합니다.${reset}` : `This month's 100 free checks are used up — showing OSV results.${reset}`;
+  }
+  return ko ? `VulnIntel 조회 실패(${s.reason ?? "error"}) — OSV 결과로 표시합니다.` : `VulnIntel lookup failed (${s.reason ?? "error"}) — showing OSV results.`;
+}
+
+export const PARTIAL_NOTICE: Record<Lang, string> = {
+  ko: "일부 외부 조회는 시간 안에 끝내지 못해 다음 scan에서 이어서 합니다(결과는 캐시로 이어짐).",
+  en: "Some external lookups did not finish in time; the next scan continues them (results are cached).",
+};

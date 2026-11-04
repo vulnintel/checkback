@@ -9,6 +9,7 @@ import { mapLimit, type Cache, type Http } from "../net/http.js";
 import { osvQueryBatch, osvVuln, type OsvVuln } from "../net/osv.js";
 import { npmAbbrev, npmCreated, npmWeeklyDownloads, pypiExists, type Exists } from "../net/registry.js";
 import { publicLookup } from "../net/vulnintel.js";
+import { viScan, type ViPackage, type ViScanStatus } from "./vi-scan.js";
 import type { CheckedRule, Lang, NoteCode, Severity } from "../types.js";
 import { cmpVersion, cvss3Score, major } from "../versions.js";
 import type { BF, BuiltinCtx } from "./backend.js";
@@ -26,8 +27,15 @@ export interface NetCtx {
   osv: boolean;
   registry: boolean;
   vulnintel: boolean;
-  caches: { registry: Cache; osv: Cache; vi: Cache };
+  caches: { registry: Cache; osv: Cache; vi: Cache; viScan: Cache };
+  /** Real-clock deadline (ms since epoch). Work not started by then is left for the next scan. */
+  deadline: number;
+  /** VulnIntel key (key mode: upload instead of OSV vulnerability details, §7-3). */
+  key?: string;
+  refreshVulnIntel?: boolean;
 }
+
+const late = (net: NetCtx): boolean => Date.now() >= net.deadline;
 
 export interface DepsInput {
   inv: Inventory;
@@ -48,6 +56,7 @@ export interface DepsOut {
   findings: BF[];
   vuln: Reason;
   hall: Reason;
+  vulnintel?: ViScanStatus;
 }
 
 let popular: { set: Set<string>; byLen: Map<number, string[]> } | undefined;
@@ -121,12 +130,29 @@ export async function depsBuiltins(ctx: BuiltinCtx, d: DepsInput): Promise<DepsO
   const targets = scope.targets.filter((t) => !allow.has(t.name));
   const versioned = targets.filter((t) => t.version !== null);
 
+  let enriching: Promise<void> = Promise.resolve();
+  let vulnPkgs: VulnPkg[] = [];
+
+  // ---- key mode: VulnIntel scan job for vulnerabilities (OSV still runs for MAL-)
+  let viPackages: ViPackage[] | null = null;
+  let viStatus: ViScanStatus | undefined;
+  if (d.vuln && net?.key) {
+    const r = await viScan(inv, {
+      http: net.http, budget: net.budget, key: net.key, lang: net.lang, cache: net.caches.viScan, now: d.now, deadline: net.deadline,
+      ...(net.refreshVulnIntel && { refresh: true }),
+    });
+    viPackages = r.packages;
+    viStatus = r.status;
+  }
+
   // ---- OSV (vulnerabilities + MAL-)
   const vulnsByTarget = new Map<number, { id: string; modified: string }[]>();
   if (!net) {
     vuln = d.vuln ? "no_consent" : undefined;
   } else if (!net.osv) {
     vuln = d.vuln ? "external_disabled" : undefined;
+  } else if (versioned.length && late(net)) {
+    vuln = "timeout_partial";
   } else if (versioned.length) {
     const r = await osvQueryBatch(net.http, versioned.map((t) => ({ ecosystem: t.ecosystem, name: t.name, version: t.version! })));
     if (r.offline || r.results.some((x) => x === null)) vuln = "offline";
@@ -146,7 +172,35 @@ export async function depsBuiltins(ctx: BuiltinCtx, d: DepsInput): Promise<DepsO
     }
   }
 
-  if (d.vuln && net && vulnsByTarget.size) {
+  if (viPackages) {
+    // VulnIntel answered: its result replaces OSV details for vulnerabilities.
+    if (vuln === "offline" || vuln === "external_disabled") vuln = undefined;
+    const byKey = new Map(versioned.map((t) => [pkgKey(t.ecosystem, t.name) + "@" + t.version, t]));
+    const pkgs: VulnPkg[] = [];
+    for (const p of viPackages) {
+      const t = byKey.get(pkgKey(p.ecosystem.toLowerCase() === "pypi" ? "PyPI" : p.ecosystem, p.name) + "@" + p.version);
+      const vulns = p.vulns.filter((v) => !v.id.startsWith("MAL-"));
+      if (!t || !vulns.length) continue;
+      pkgs.push({
+        t,
+        ids: vulns.map((v) => ({ id: v.id, modified: "" })),
+        unknownOnly: vulns.every((v) => v.unknown),
+        vulns: vulns.map((v) => ({
+          id: v.id,
+          modified: "",
+          aliases: v.aliases,
+          kev: v.kev,
+          ...(v.severity && { osvSeverity: v.severity }),
+          ...(v.cvss !== undefined && { cvss: v.cvss }),
+          fixed: { [pkgKey(t.ecosystem, t.name)]: v.fixed },
+          ...(v.vpi !== undefined && { vi: { kev: v.kev, vpi: v.vpi, epss: v.epss ?? null, cvss: v.cvss ?? null } }),
+        })),
+        fromVulnIntel: true,
+      });
+    }
+    enriching = net ? enrich(pkgs, net, d.now) : Promise.resolve();
+    vulnPkgs = pkgs;
+  } else if (d.vuln && net && vulnsByTarget.size) {
     const pkgs: VulnPkg[] = [];
     for (const [i, ids] of vulnsByTarget) {
       const real = ids.filter((v) => !v.id.startsWith("MAL-"));
@@ -156,50 +210,19 @@ export async function depsBuiltins(ctx: BuiltinCtx, d: DepsInput): Promise<DepsO
     const details = new Map<string, Detail | null>();
     await mapLimit([...new Map(all.map((v) => [v.id, v])).values()], 8, async (v) => {
       const key = v.id;
+      if (late(net)) return; // left for the next scan (cards keep their ids, severity may be unknown)
       const cached = net.caches.osv.get<Detail>(key, 7 * DAY, d.now);
-      if (cached && cached.modified === v.modified) return void details.set(key, cached);
+      if (cached && cached.modified === v.modified) return void details.set(key, { ...cached }); // copy: priority data must not leak into the 7-day cache
       const raw = await osvVuln(net.http, v.id);
-      const det = raw ? toDetail(raw) : null;
-      if (det) net.caches.osv.set(key, det, d.now);
+      const det = raw ? { ...toDetail(raw), modified: v.modified || raw.modified || "" } : null;
+      if (det) net.caches.osv.set(key, { ...det }, d.now);
       details.set(key, det);
     });
     for (const p of pkgs) p.vulns = p.ids.map((v) => details.get(v.id)).filter((x): x is Detail => !!x);
+    if (pkgs.some((p) => p.vulns.length < p.ids.length) && late(net) && !vuln) vuln = "timeout_partial";
 
-    // Priority enrichment (§8-4/§8-5): most severe IDs first across all packages, capped per
-    // scan, paced to ~50/min after a short burst (the server's per-IP limit allows a burst of 20).
-    if (net.vulnintel) {
-      const queue = pkgs
-        .flatMap((p) => p.vulns.map((v) => ({ p, v, s: vulnSeverity({ ...v, vi: undefined }) })))
-        .sort((a, b) => sevRank(a.s.sev) - sevRank(b.s.sev) || (b.v.cvss ?? 0) - (a.v.cvss ?? 0));
-      let calls = 0;
-      let stop = false;
-      for (const { p, v } of queue) {
-        const id = v.aliases.find((a) => a.startsWith("CVE-")) ?? v.id;
-        const key = `${id}:${net.lang}`;
-        const hit = net.caches.vi.get<ViInfo | null>(key, DAY, d.now);
-        if (hit !== undefined) {
-          v.vi = hit ?? undefined;
-          continue;
-        }
-        if (stop || calls >= PUBLIC_LOOKUP_CAP) {
-          p.pending = true;
-          continue;
-        }
-        if (calls >= VI_BURST) await net.http.sleep(VI_INTERVAL_MS);
-        calls++;
-        const r = await publicLookup(net.http, net.budget, id, net.lang);
-        if (r.ok) {
-          v.vi = { kev: r.value.is_kev, vpi: r.value.vpi_level, epss: r.value.epss, cvss: r.value.cvss };
-          net.caches.vi.set(key, v.vi, d.now);
-        } else if (r.reason === "not_found") net.caches.vi.set(key, null, d.now);
-        else if (r.reason === "budget") p.pending = true;
-        else {
-          p.failed = true;
-          if (r.reason === "rate_limited" || r.reason === "offline") stop = true;
-        }
-      }
-    }
-    for (const p of pkgs) out.push(vulnFinding(p));
+    enriching = enrich(pkgs, net, d.now); // runs while the registry phase below runs (different hosts)
+    vulnPkgs = pkgs;
   }
 
   // ---- registry existence / heuristics (§7-2, §8-2)
@@ -213,13 +236,21 @@ export async function depsBuiltins(ctx: BuiltinCtx, d: DepsInput): Promise<DepsO
         ...importOnly.filter((i) => !allow.has(i.name)).map((i) => ({ eco: i.ecosystem, name: i.name, version: null, file: i.file, fromLock: false, line: i.line as number | null, dev: false })),
       ];
       const byName = new Map<string, typeof lookups>();
-      for (const l of lookups) byName.set(`${l.eco}\0${l.name}`, [...(byName.get(`${l.eco}\0${l.name}`) ?? []), l]);
+      // Manifest and import names first (likely hallucinations), lock-only names after.
+      for (const l of [...lookups.filter((x) => !x.fromLock), ...lookups.filter((x) => x.fromLock)]) {
+        byName.set(`${l.eco}\0${l.name}`, [...(byName.get(`${l.eco}\0${l.name}`) ?? []), l]);
+      }
       let offline = false;
+      let partial = false;
       const reg = new Map<string, Reg>();
       await mapLimit([...byName.keys()], 4, async (key) => {
         const [eco, name] = key.split("\0") as ["npm" | "PyPI", string];
         const cached = net.caches.registry.get<Reg>(key, DAY, d.now);
         if (cached) return void reg.set(key, cached);
+        if (late(net)) {
+          partial = true;
+          return;
+        }
         let r: Reg;
         if (eco === "npm") {
           const a = await npmAbbrev(net.http, name);
@@ -232,9 +263,11 @@ export async function depsBuiltins(ctx: BuiltinCtx, d: DepsInput): Promise<DepsO
         reg.set(key, r);
       });
       if (offline) hall = "offline";
+      else if (partial) hall = "timeout_partial";
       const minWeekly = d.params.min_weekly_downloads ?? 1000;
       for (const [key, ls] of byName) {
-        const r = reg.get(key)!;
+        const r = reg.get(key);
+        if (!r) continue; // not looked up before the deadline
         const l = ls[0]!;
         const fields = { ecosystem: l.eco, package: l.name, ...(l.version && { version: l.version }), source: "registry" as const };
         const line = l.line ?? (isManifest(l.file) ? await lineOfName(d.text, l.file, l.name) : null);
@@ -250,12 +283,21 @@ export async function depsBuiltins(ctx: BuiltinCtx, d: DepsInput): Promise<DepsO
           continue;
         }
         // Edit-distance heuristic — npm only (PyPI list unlicensed, U13: off).
-        if (l.eco === "npm") {
+        if (l.eco === "npm" && !late(net)) {
           const near = nearPopular(l.name);
           if (near) {
-            const created = await npmCreated(net.http, l.name);
+            // Same 24-hour cache entry as the existence check (§8-2).
+            if (r.created === undefined) {
+              r.created = await npmCreated(net.http, l.name);
+              net.caches.registry.set(key, r, d.now);
+            }
+            const created = r.created;
             if (created && d.now - Date.parse(created) <= 30 * DAY) {
-              const weekly = await npmWeeklyDownloads(net.http, l.name);
+              if (r.weekly === undefined) {
+                r.weekly = await npmWeeklyDownloads(net.http, l.name);
+                net.caches.registry.set(key, r, d.now);
+              }
+              const weekly = r.weekly;
               if (weekly !== null && weekly < minWeekly) {
                 const v = ls.find((x) => x.version)?.version ?? r.latest ?? "";
                 const script = r.scripts[v] === true;
@@ -277,13 +319,63 @@ export async function depsBuiltins(ctx: BuiltinCtx, d: DepsInput): Promise<DepsO
       out.push({ rule: "hallucinated-package", kind: "undeclared_import", severity: "medium", confidence: "info", file: i.file, line: i.line, value: `${key}:import`, extra: { ecosystem: i.ecosystem, package: i.name } });
     }
   }
-  return { findings: out, vuln, hall };
+  await enriching;
+  for (const p of vulnPkgs) out.push(vulnFinding(p));
+  return { findings: out, vuln, hall, ...(viStatus && { vulnintel: viStatus }) };
+}
+
+/**
+ * Priority enrichment (§8-4/§8-5): most severe IDs first across all packages, capped per scan,
+ * paced to ~50/min after a short burst (the server's per-IP limit allows a burst of 20). Anything
+ * not done by the deadline / budget is marked "priority pending" and continues from cache next scan.
+ */
+async function enrich(pkgs: VulnPkg[], net: NetCtx, now: number): Promise<void> {
+  if (!net.vulnintel) return;
+  const queue = pkgs
+    .flatMap((p) => p.vulns.map((v) => ({ p, v, s: vulnSeverity({ ...v, vi: undefined }) })))
+    .sort((a, b) => sevRank(a.s.sev) - sevRank(b.s.sev) || (b.v.cvss ?? 0) - (a.v.cvss ?? 0));
+  let calls = 0;
+  let stop = false;
+  for (const { p, v } of queue) {
+    if (v.vi) continue; // B1 fields already came with the VulnIntel scan result
+    const id = v.aliases.find((a) => a.startsWith("CVE-")) ?? v.id;
+    const key = `${id}:${net.lang}`;
+    const hit = net.caches.vi.get<ViInfo | null>(key, DAY, now);
+    if (hit !== undefined) {
+      v.vi = hit ?? undefined;
+      continue;
+    }
+    if (stop || calls >= PUBLIC_LOOKUP_CAP || late(net)) {
+      p.pending = true;
+      continue;
+    }
+    if (calls >= VI_BURST) {
+      if (Date.now() + VI_INTERVAL_MS >= net.deadline) {
+        p.pending = true;
+        continue;
+      }
+      await net.http.sleep(VI_INTERVAL_MS);
+    }
+    calls++;
+    const r = await publicLookup(net.http, net.budget, id, net.lang);
+    if (r.ok) {
+      v.vi = { kev: r.value.is_kev, vpi: r.value.vpi_level, epss: r.value.epss, cvss: r.value.cvss };
+      net.caches.vi.set(key, v.vi, now);
+    } else if (r.reason === "not_found") net.caches.vi.set(key, null, now);
+    else if (r.reason === "budget") p.pending = true;
+    else {
+      p.failed = true;
+      if (r.reason === "rate_limited" || r.reason === "offline") stop = true;
+    }
+  }
 }
 
 interface Reg {
   s: Exists;
   latest?: string;
   scripts: Record<string, boolean>;
+  created?: string | null;
+  weekly?: number | null;
 }
 
 interface ViInfo {
@@ -302,6 +394,8 @@ interface Detail {
   /** "eco:name" → fixed versions */
   fixed: Record<string, string[]>;
   vi?: ViInfo;
+  /** KEV flag from a VulnIntel scan result. */
+  kev?: boolean;
 }
 
 interface VulnPkg {
@@ -310,6 +404,9 @@ interface VulnPkg {
   vulns: Detail[];
   pending?: boolean;
   failed?: boolean;
+  /** VulnIntel reported only unknown_vulnerabilities (version could not be judged) → review. */
+  unknownOnly?: boolean;
+  fromVulnIntel?: boolean;
 }
 
 const pkgKey = (eco: string, name: string): string => `${eco}:${eco === "PyPI" ? normalizePyName(name) : name}`;
@@ -338,7 +435,7 @@ const sevRank = (s: Severity): number => SEV.indexOf(s);
 
 /** §7-3 severity mapping: KEV → critical, VPI 5–6 critical / 4 high / 1–3 medium, else OSV severity or CVSS. */
 function vulnSeverity(v: Detail): { sev: Severity; known: boolean } {
-  if (v.vi?.kev) return { sev: "critical", known: true };
+  if (v.vi?.kev || v.kev) return { sev: "critical", known: true };
   if (v.vi?.vpi) return { sev: v.vi.vpi >= 5 ? "critical" : v.vi.vpi === 4 ? "high" : "medium", known: true };
   const cv = v.cvss ?? v.vi?.cvss ?? undefined;
   if (v.osvSeverity === "CRITICAL" || (cv ?? 0) >= 9) return { sev: "critical", known: true };
@@ -375,7 +472,7 @@ function vulnFinding(p: VulnPkg): BF {
     rule: "vulnerable-deps",
     kind: fix ? "vulnerable" : "vulnerable_no_fix",
     severity,
-    confidence: "confirmed",
+    confidence: p.unknownOnly ? "review" : "confirmed",
     file: t.sources[0]!,
     line: null,
     value: `${t.ecosystem}:${t.name}@${t.version}`,
@@ -384,11 +481,11 @@ function vulnFinding(p: VulnPkg): BF {
       ...pkgFields(t),
       ...(fix && { fixed_version: fix }),
       vuln_ids: ids,
-      kev: p.vulns.some((v) => v.vi?.kev),
+      kev: p.vulns.some((v) => v.vi?.kev || v.kev),
       ...(vpi !== undefined && { vpi_level: vpi }),
       ...(epss !== undefined && { epss }),
       ...(cvss !== undefined && { cvss }),
-      source: p.vulns.some((v) => v.vi) ? "vulnintel" : "osv",
+      source: p.fromVulnIntel || p.vulns.some((v) => v.vi) ? "vulnintel" : "osv",
       ...(t.sources.length > 1 && { related: t.sources }),
     },
   };

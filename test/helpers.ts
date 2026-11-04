@@ -1,9 +1,10 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { PassThrough } from "node:stream";
 import { dirname, join } from "node:path";
 import { afterAll } from "vitest";
-import { loadDefaultTemplate, scan, type Finding, type ScanResult, type Template } from "../src/index.js";
+import { loadDefaultTemplate, scan, type Finding, type ScanOptions, type ScanResult, type Template } from "../src/index.js";
 
 const made: string[] = [];
 afterAll(() => {
@@ -38,19 +39,33 @@ export function gitRepo(cwd: string): string {
   return cwd;
 }
 
-export async function scanDefault(
-  cwd: string,
-  opts: { lang?: "ko" | "en"; appDir?: string; fetch?: typeof fetch; now?: () => number } = {},
-): Promise<ScanResult> {
+export async function scanDefault(cwd: string, opts: ScanOptions = {}): Promise<ScanResult> {
   return scan(cwd, await loadDefaultTemplate(), { appDir: opts.appDir ?? tempDir(), ...opts });
 }
 
 /** App data folder with first-run consent given (external lookups allowed). */
-export async function consentedAppDir(external?: { osv?: boolean; registry?: boolean; vulnintel?: boolean }): Promise<string> {
+export async function consentedAppDir(external?: { osv?: boolean; registry?: boolean; vulnintel?: boolean }, apiKey?: string): Promise<string> {
   const { updateConfig } = await import("../src/appdata.js");
   const d = tempDir();
-  await updateConfig(d, { consent: { at: "2026-11-04T00:00:00Z", version: 1 }, ...(external && { external }) });
+  await updateConfig(d, { consent: { at: "2026-11-04T00:00:00Z", version: 1 }, ...(external && { external }), ...(apiKey && { api_key: apiKey }) });
   return d;
+}
+
+/** Interactive terminal stand-in: answers are fed line by line, output is collected. */
+export function tty(answers: string[], interactive = true): { io: import("../src/consent.js").ConsentIO; out: () => string; err: () => string } {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  const error = new PassThrough();
+  let o = "";
+  let e = "";
+  const queue = [...answers];
+  // Answer each prompt (output not ending in a newline) when it appears, like a person would.
+  output.on("data", (c) => {
+    o += String(c);
+    if (!String(c).endsWith("\n") && queue.length) setImmediate(() => input.write(`${queue.shift()}\n`));
+  });
+  error.on("data", (c) => (e += String(c)));
+  return { io: { input, output, error, interactive }, out: () => o, err: () => e };
 }
 
 export interface NpmMock {
@@ -72,6 +87,10 @@ export interface NetMock {
   /** Statuses returned by successive querybatch calls before normal answers. */
   osvFail?: number[];
   offline?: boolean;
+  /** Extra routes tried first (VulnIntel key endpoints etc.). Return undefined to fall through. */
+  custom?: (u: URL, init: RequestInit | undefined) => Response | undefined | Promise<Response | undefined>;
+  /** Artificial latency per request (ms). */
+  latencyMs?: number;
 }
 
 export interface Call {
@@ -89,7 +108,10 @@ export function mockNet(m: NetMock): { fetch: typeof fetch; calls: Call[] } {
     const url = String(input);
     calls.push({ method: init?.method ?? "GET", url, ...(typeof init?.body === "string" && { body: init.body }) });
     if (m.offline) throw new TypeError("fetch failed");
+    if (m.latencyMs) await new Promise((r) => setTimeout(r, m.latencyMs));
     const u = new URL(url);
+    const c = await m.custom?.(u, init);
+    if (c) return c;
     if (u.host === "api.osv.dev" && u.pathname === "/v1/querybatch") {
       const st = m.osvFail?.shift();
       if (st) return json({ message: "fail" }, st);

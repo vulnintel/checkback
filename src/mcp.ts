@@ -12,7 +12,7 @@ import { KIND_TEXT } from "./builtins/text.js";
 import { buildSbom } from "./deps/sbom.js";
 import { readInventory } from "./deps/inventory.js";
 import { VERSION, type Fetch } from "./net/http.js";
-import { CONSENT_HOWTO, DATA_TABLE, DISCLAIMER, KEY_NOTICE, osLang } from "./notice.js";
+import { CONSENT_HOWTO, DATA_TABLE, DISCLAIMER, KEY_NOTICE, osLang, PARTIAL_NOTICE, viNotice } from "./notice.js";
 import { aiCheckPromptForProject, fixPromptsForIds, MAX_BATCH } from "./prompts.js";
 import { readLastScan, type Compare } from "./recheck.js";
 import { scan } from "./scan.js";
@@ -20,6 +20,8 @@ import { loadDefaultTemplate, loadTemplate } from "./template.js";
 import type { CheckedRule, Finding, Lang, Template } from "./types.js";
 
 const PROTOCOLS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
+/** MCP clients time out long tool calls: external lookups get this budget, the rest continues next scan. */
+export const MCP_SCAN_DEADLINE_MS = 20_000;
 
 /** Finding fields an MCP response may carry — an allowlist, so masked_match/value_hash can never leak. */
 const MCP_FIELDS = [
@@ -47,6 +49,8 @@ export interface McpOptions {
   appDir?: string;
   fetch?: Fetch;
   now?: () => number;
+  /** Override MCP_SCAN_DEADLINE_MS (tests). */
+  deadlineMs?: number;
 }
 
 const TOOLS = [
@@ -104,9 +108,15 @@ export function createMcpHandler(o: McpOptions): (msg: unknown) => Promise<unkno
       const cfg = await readConfig(appDir);
       const l = cfg.lang ?? osLang();
       const tpl = await templateById(typeof args.template === "string" ? args.template : undefined, appDir);
-      const r = await scan(o.cwd, tpl, { appDir, lang: l, ...(o.fetch && { fetch: o.fetch }), ...(o.now && { now: o.now }) });
+      const r = await scan(o.cwd, tpl, {
+        appDir, lang: l, deadlineMs: o.deadlineMs ?? MCP_SCAN_DEADLINE_MS, ...(o.fetch && { fetch: o.fetch }), ...(o.now && { now: o.now }),
+      });
+      const partial = r.checked.some((c) => c.reason === "timeout_partial") || r.findings.some((f) => f.notes?.includes("priority_pending"));
+      const vi = viNotice(r.vulnintel, l);
       const notice = [
         ...(hasConsent(cfg) ? [] : [DATA_TABLE[l], CONSENT_HOWTO[l]]),
+        ...(vi ? [vi] : []),
+        ...(partial ? [PARTIAL_NOTICE[l]] : []),
         ...(apiKeyOf(cfg) ? [] : [KEY_NOTICE[l]]),
         DISCLAIMER[l],
       ].join("\n\n");

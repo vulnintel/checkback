@@ -98,6 +98,8 @@ export interface ScanResult {
   stats: ScanStats;
   /** Present when a baseline exists: fix-request snapshot, else the previous scan (§7-8). */
   compare?: import("./recheck.js").Compare;
+  /** Key mode only: how the VulnIntel scan went (ok / cached / pending / fallback to OSV + reason). */
+  vulnintel?: import("./builtins/vi-scan.js").ViScanStatus;
 }
 
 // ---------- template ----------

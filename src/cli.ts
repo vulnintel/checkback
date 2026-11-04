@@ -3,6 +3,7 @@
 // `scan` / `sbom` print JSON for development checks. The GUI arrives in stage 7.
 import { readFile } from "node:fs/promises";
 import { defaultAppDir, readConfig } from "./appdata.js";
+import { ignoreCommand, trackCommand, watchCommand } from "./commands.js";
 import { consentCommand } from "./consent.js";
 import { buildSbom, loadDefaultTemplate, loadTemplate, readInventory, scan } from "./index.js";
 import { runStdioServer } from "./mcp.js";
@@ -24,6 +25,13 @@ if (cmd === "mcp") {
     appDir,
     lang,
   );
+} else if (cmd === "watch" || cmd === "track" || cmd === "ignore") {
+  const appDir = defaultAppDir();
+  const lang = (await readConfig(appDir)).lang ?? osLang();
+  const io = { input: process.stdin, output: process.stdout, error: process.stderr, interactive: !!process.stdin.isTTY && !!process.stdout.isTTY };
+  const o = { cwd: process.cwd(), appDir, lang };
+  process.exitCode =
+    cmd === "watch" ? await watchCommand(io, o) : cmd === "track" ? await trackCommand(io, o) : await ignoreCommand(io, { ...o, remove: args.includes("--remove") });
 } else if (cmd === "scan") {
   const tplPath = flag("--template");
   const template = tplPath ? await loadTemplate(await readFile(tplPath)) : await loadDefaultTemplate();
@@ -34,6 +42,6 @@ if (cmd === "mcp") {
 } else if (cmd === "sbom") {
   process.stdout.write(`${buildSbom(await readInventory(process.cwd()), { forUpload: args.includes("--upload") })}\n`);
 } else {
-  process.stderr.write("usage: checkback mcp | checkback consent | checkback scan [--lang ko|en] [--template file.yaml] | checkback sbom [--upload]\n");
+  process.stderr.write("usage: checkback mcp | checkback consent | checkback watch | checkback track | checkback ignore [--remove] | checkback scan [--lang ko|en] [--template file.yaml] | checkback sbom [--upload]\n");
   process.exitCode = 2;
 }

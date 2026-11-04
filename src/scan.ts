@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { apiKeyOf, defaultAppDir, hasConsent, installKey, readConfig, writeJson, type LocalConfig } from "./appdata.js";
 import { firebaseRules, supabaseRls, type BF, type BuiltinCtx } from "./builtins/backend.js";
 import { depsBuiltins, type NetCtx } from "./builtins/deps.js";
+import type { ViScanStatus } from "./builtins/vi-scan.js";
 import { jsImports, pyImports } from "./builtins/imports.js";
 import { BUILTIN_NAMES, KIND_TEXT } from "./builtins/text.js";
 import { lookupScope, readInventory, type Inventory } from "./deps/inventory.js";
@@ -40,6 +41,13 @@ export interface ScanOptions {
   now?: () => number;
   /** Compare with the fix-request snapshot / previous scan and store this scan (§7-8). Default true. */
   recheck?: boolean;
+  /**
+   * Wall-clock budget for external lookups (MCP: 20 s). Lookups not started in time are left
+   * pending and continue from cache on the next scan. Default: no limit.
+   */
+  deadlineMs?: number;
+  /** Key mode: ask VulnIntel again even if this exact SBOM already has a result ([다시 조회]). */
+  refreshVulnIntel?: boolean;
 }
 
 const CONF_RANK: Record<Confidence, number> = { confirmed: 0, review: 1, info: 2 };
@@ -87,7 +95,8 @@ export async function scan(cwd: string, template: Template, opts: ScanOptions = 
   for (const r of active) if (r.type === "file") await run.fileRule(r);
   const now = (opts.now ?? Date.now)();
   const inv = await readInventory(root, files);
-  await run.builtins(builtins, { cfg, appDir, fetch: opts.fetch, now, inv });
+  const deadline = Date.now() + (opts.deadlineMs ?? Number.MAX_SAFE_INTEGER / 2);
+  await run.builtins(builtins, { cfg, appDir, fetch: opts.fetch, now, inv, deadline, refresh: !!opts.refreshVulnIntel });
 
   let findings = run.finish();
   const ignored = new Set(opts.ignores === false ? [] : (await listIgnores(root, appDir)).map((e) => e.id));
@@ -102,6 +111,7 @@ export async function scan(cwd: string, template: Template, opts: ScanOptions = 
     findings,
     checked,
     stats: run.stats,
+    ...(run.vulnintel && { vulnintel: run.vulnintel }),
   };
   if (opts.recheck === false) return result;
 
@@ -471,7 +481,12 @@ class Run {
   }
 
   /** Stage-4 builtins (§7-1~7-3). External lookups only after consent (§3-1). */
-  async builtins(rules: BuiltinRule[], o: { cfg: LocalConfig; appDir: string; fetch?: Fetch; now: number; inv: Inventory }): Promise<void> {
+  vulnintel: ViScanStatus | undefined;
+
+  async builtins(
+    rules: BuiltinRule[],
+    o: { cfg: LocalConfig; appDir: string; fetch?: Fetch; now: number; inv: Inventory; deadline: number; refresh: boolean },
+  ): Promise<void> {
     if (rules.length === 0) return;
     const on = (id: string): BuiltinRule | undefined => rules.find((r) => r.id === id);
     const texts = new Map<string, Promise<string | null>>();
@@ -521,7 +536,11 @@ class Run {
             registry: await Cache.open(o.appDir, "registry"),
             osv: await Cache.open(o.appDir, "osv"),
             vi: await Cache.open(o.appDir, "vulnintel"),
+            viScan: await Cache.open(o.appDir, "vulnintel-scan"),
           },
+          deadline: o.deadline,
+          ...(apiKeyOf(o.cfg) && { key: apiKeyOf(o.cfg) }),
+          refreshVulnIntel: o.refresh,
         };
       }
       const r = await depsBuiltins(ctx, {
@@ -538,10 +557,12 @@ class Run {
       out.push(...r.findings);
       if (vuln && r.vuln) this.checked.set(vuln.id, { rule_id: vuln.id, ran: false, reason: r.vuln });
       if (hall && r.hall) this.checked.set(hall.id, { rule_id: hall.id, ran: false, reason: r.hall });
+      this.vulnintel = r.vulnintel;
       if (net) {
         await net.caches.registry.save(86_400_000, o.now);
         await net.caches.osv.save(7 * 86_400_000, o.now);
         await net.caches.vi.save(86_400_000, o.now);
+        await net.caches.viScan.save(Number.MAX_SAFE_INTEGER, o.now);
       }
     }
     for (const b of out) {
