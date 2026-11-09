@@ -5,10 +5,13 @@ import { NetError, requestJson, type Http } from "./http.js";
 
 export type Exists = "ok" | "missing" | "error" | "offline";
 
+// Registry metadata of big packages is large (npm abbreviated `next` ≈ 26 MB), above the 4 MiB default cap.
+const REGISTRY_MAX_BYTES = 64 * 1024 * 1024;
+
 async function get<T>(http: Http, url: string, accept?: string): Promise<{ s: Exists; body?: T }> {
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      return { s: "ok", body: await requestJson<T>(http, url, accept ? { headers: { Accept: accept } } : {}) };
+      return { s: "ok", body: await requestJson<T>(http, url, { maxBytes: REGISTRY_MAX_BYTES, ...(accept && { headers: { Accept: accept } }) }) };
     } catch (e) {
       const err = e as NetError;
       if (err.kind === "offline") return { s: "offline" };

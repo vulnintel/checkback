@@ -13,7 +13,7 @@ import { VERSION, type Fetch } from "./net/http.js";
 import { CONSENT_HOWTO, DATA_TABLE, DISCLAIMER, KEY_NOTICE, osLang, PARTIAL_NOTICE, viNotice } from "./notice.js";
 import { aiCheckPromptForProject, dataText, fixPromptsForIds, isSafeVersion, isVulnId, MAX_BATCH, safePkg } from "./prompts.js";
 import { readLastScan, type Compare } from "./recheck.js";
-import { scan } from "./scan.js";
+import { ProjectDirError, scan } from "./scan.js";
 import { loadDefaultTemplate } from "./template.js";
 import { aiExternal, loadTemplateById, StoreError } from "./template-store.js";
 import type { CheckedRule, Finding, Lang, Template } from "./types.js";
@@ -210,7 +210,7 @@ export function createMcpHandler(o: McpOptions): (msg: unknown) => Promise<unkno
           const text = await fn((msg.params?.arguments ?? {}) as Record<string, unknown>);
           return reply({ content: [{ type: "text", text }] });
         } catch (e) {
-          return reply({ content: [{ type: "text", text: e instanceof ToolError ? e.message : "internal error" }], isError: true });
+          return reply({ content: [{ type: "text", text: e instanceof ToolError || e instanceof ProjectDirError ? e.message : "internal error" }], isError: true });
         }
       }
       default:
