@@ -23,24 +23,28 @@ async function get<T>(http: Http, url: string, accept?: string): Promise<{ s: Ex
   return { s: "error" };
 }
 
-const npmPath = (name: string): string => name.replace("/", "%2F");
+// npm name rule (legacy names may have capitals). Lock names are untrusted: anything else is not looked up.
+const NPM_NAME = /^(@[a-z0-9~-][a-z0-9._~-]*\/)?[A-Za-z0-9~-][A-Za-z0-9._~-]*$/;
+const npmPath = (name: string): string => encodeURIComponent(name).replace(/^%40/, "@");
 
 export interface NpmAbbrev {
   "dist-tags"?: Record<string, string>;
   versions?: Record<string, { hasInstallScript?: boolean }>;
 }
 
-export const npmAbbrev = (http: Http, name: string): Promise<{ s: Exists; body?: NpmAbbrev }> =>
-  get<NpmAbbrev>(http, `https://registry.npmjs.org/${npmPath(name)}`, "application/vnd.npm.install-v1+json");
+export const npmAbbrev = async (http: Http, name: string): Promise<{ s: Exists; body?: NpmAbbrev }> =>
+  NPM_NAME.test(name) ? get<NpmAbbrev>(http, `https://registry.npmjs.org/${npmPath(name)}`, "application/vnd.npm.install-v1+json") : { s: "error" };
 
 /** Full document — only for edit-distance candidates (has `time.created`). */
 export async function npmCreated(http: Http, name: string): Promise<string | null> {
+  if (!NPM_NAME.test(name)) return null;
   const r = await get<{ time?: { created?: string } }>(http, `https://registry.npmjs.org/${npmPath(name)}`);
   return r.body?.time?.created ?? null;
 }
 
 /** Weekly downloads; 404 / no stats → 0 (U15). */
 export async function npmWeeklyDownloads(http: Http, name: string): Promise<number | null> {
+  if (!NPM_NAME.test(name)) return null;
   const r = await get<{ downloads?: number }>(http, `https://api.npmjs.org/downloads/point/last-week/${name}`);
   if (r.s === "missing") return 0;
   return r.s === "ok" ? (r.body?.downloads ?? 0) : null;

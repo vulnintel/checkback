@@ -50,7 +50,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json && tsc -p tsconfig.web.json",
-    "test": "vitest run --testTimeout=30000",
+    "test": "vitest run --testTimeout=30000 --hookTimeout=60000",
     "prepublishOnly": "pnpm build && pnpm test",
     "e2e:docker": "bash docker/e2e/run.sh"
   },

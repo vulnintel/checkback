@@ -15,8 +15,9 @@ export interface ImportRef {
 }
 
 const NODE_BUILTIN = new Set(builtinModules.map((m) => m.replace(/^node:/, "")));
+// The clause before `from` stops at the next import/export keyword so each match start is bounded (else quadratic).
 const JS_RX =
-  /(?:^|[^\w.$])(?:import|export)\s[^'"`;]*?from\s*['"]([^'"]+)['"]|(?:^|[^\w.$])import\s*['"]([^'"]+)['"]|\brequire\(\s*['"]([^'"]+)['"]\s*\)|\bimport\(\s*['"]([^'"]+)['"]\s*\)/g;
+  /(?:^|[^\w.$])(?:import|export)\s(?:(?!\b(?:import|export)\b)[^'"`;])*?from\s*['"]([^'"]+)['"]|(?:^|[^\w.$])import\s*['"]([^'"]+)['"]|\brequire\(\s*['"]([^'"]+)['"]\s*\)|\bimport\(\s*['"]([^'"]+)['"]\s*\)/g;
 const PKG_NAME = /^(@[a-z0-9._-]+\/)?[A-Za-z0-9._-]+$/;
 
 /** JS/TS bare specifiers minus Node builtins, tsconfig paths/baseUrl dirs, bundler aliases, workspace names, same-name local folders/files. */
@@ -42,8 +43,8 @@ export async function jsImports(files: FileEntry[], text: (rel: string) => Promi
     }
     if (/^(vite|webpack|vitest|astro|svelte|nuxt)\.config\./.test(b)) {
       const t = (await text(f.rel)) ?? "";
-      const alias = /alias\s*:\s*[{[]([\s\S]*?)[}\]]/.exec(t);
-      if (alias) for (const m of alias[1]!.matchAll(/['"]?([@~$#\w/-]+)['"]?\s*:/g)) aliases.push(m[1]!);
+      const alias = /alias\s*:\s*[{[]([\s\S]*?)(?:[}\]]|$)/.exec(t);
+      if (alias) for (const m of alias[1]!.matchAll(/(?<![@~$#\w/-])['"]?([@~$#\w/-]+)['"]?\s*:/g)) aliases.push(m[1]!);
       for (const m of t.matchAll(/find\s*:\s*['"]([^'"]+)['"]/g)) aliases.push(m[1]!);
     }
   }

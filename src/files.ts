@@ -1,5 +1,5 @@
-import { readdir, readFile, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { lstat, readdir, readFile, realpath, stat } from "node:fs/promises";
+import { join, sep } from "node:path";
 
 export interface FileEntry {
   /** CWD-relative, "/"-separated. */
@@ -44,8 +44,10 @@ export async function collectFiles(root: string): Promise<FileEntry[]> {
       const childRel = rel ? `${rel}/${e.name}` : e.name;
       if (e.isDirectory()) {
         if (SKIP_DIRS.has(e.name)) continue;
-        if (e.name === ".next") await walk(join(childAbs, "static"), `${childRel}/static`, true);
-        else await walk(childAbs, childRel, build || BUILD_DIRS.has(e.name));
+        if (e.name === ".next") {
+          const st = join(childAbs, "static");
+          if (await isPlainDirInside(st, root)) await walk(st, `${childRel}/static`, true);
+        } else await walk(childAbs, childRel, build || BUILD_DIRS.has(e.name));
       } else if (e.isFile()) {
         out.push({ rel: childRel, abs: childAbs, build });
       }
@@ -53,6 +55,18 @@ export async function collectFiles(root: string): Promise<FileEntry[]> {
   }
   await walk(root, "", false);
   return out;
+}
+
+/** `.next/static` is opened by name, not via a dirent: refuse links/junctions and anything resolving outside root. */
+async function isPlainDirInside(abs: string, root: string): Promise<boolean> {
+  try {
+    const st = await lstat(abs);
+    if (st.isSymbolicLink() || !st.isDirectory()) return false;
+    // Catches reparse points Node doesn't report as links.
+    return (await realpath(abs)).startsWith(root.endsWith(sep) ? root : root + sep);
+  } catch {
+    return false;
+  }
 }
 
 export type SkipReason = "too_large" | "binary" | "utf16" | "long_line" | "unreadable";

@@ -1,15 +1,40 @@
 import { execFile } from "node:child_process";
 
-// Repo-local config can name programs git would run (core.fsmonitor etc.); the scanned repo is
-// untrusted, so turn those off. No shell is involved.
-const SAFE = ["-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", "-c", "core.quotePath=false"];
+// The scanned repo (incl. its .git/config) is untrusted: repo config must not make git run a program.
+// We only run rev-parse, ls-files, check-ignore, log --name-only and `show <blob>`. What those can reach:
+// - log/show: log.showSignature -> gpg.program / gpg.ssh.program / gpg.x509.program
+// - ls-files: core.fsmonitor
+// - log/show in a partial clone: lazy fetch of missing objects -> transport (ext::, ssh/core.sshCommand,
+//   credential helpers). protocol.allow=never + GIT_NO_LAZY_FETCH stop the fetch before any of those.
+// - pager only runs on a TTY (we pipe), --no-pager anyway; hooks: none of these commands run hooks, but
+//   core.hooksPath points nowhere to be sure. diff.external/textconv/filter drivers are only used when a diff
+//   or checkout is produced; log gets --no-ext-diff --no-textconv. `show <blob>` streams raw unless
+//   --textconv is on the command line, so it gets no textconv flag (passing one switches to the textconv path).
+// -c on the command line wins over every config file, including [include]/[includeIf] files.
+const SAFE = [
+  "--no-pager",
+  "-c", "core.fsmonitor=false",
+  "-c", "core.untrackedCache=false",
+  "-c", "core.quotePath=false",
+  "-c", "log.showSignature=false",
+  "-c", "protocol.allow=never",
+  "-c", "core.hooksPath=/dev/null/checkback-no-hooks",
+];
+const LOG_SAFE = ["--no-show-signature", "--no-ext-diff", "--no-textconv"];
+
+/** Child env: drop our own secrets, never prompt, never lock, never lazy-fetch. */
+export function gitEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...base, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1" };
+  for (const k of Object.keys(env)) if (/^VULNINTEL_/i.test(k)) delete env[k];
+  return env;
+}
 
 function git(cwd: string, args: string[], input?: string): Promise<{ code: number; out: string }> {
   return new Promise((resolve) => {
     const child = execFile(
       "git",
       [...SAFE, ...args],
-      { cwd, encoding: "utf8", maxBuffer: 256 * 1024 * 1024, timeout: 120_000, windowsHide: true, env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0" } },
+      { cwd, encoding: "utf8", maxBuffer: 256 * 1024 * 1024, timeout: 120_000, windowsHide: true, env: gitEnv() },
       (err, stdout) => {
         const code = err ? (typeof err.code === "number" ? err.code : -1) : 0;
         resolve({ code, out: stdout ?? "" });
@@ -50,7 +75,7 @@ export async function gitInfo(cwd: string): Promise<GitInfo> {
       const key = pathspecs.join("\0");
       let hit = historyCache.get(key);
       if (!hit) {
-        const r = await git(cwd, ["log", "--all", "--relative", "--name-only", "--format=", "-z", "--", ...pathspecs]);
+        const r = await git(cwd, ["log", ...LOG_SAFE, "--all", "--relative", "--name-only", "--format=", "-z", "--", ...pathspecs]);
         hit = new Set(splitZ(r.out).map((p) => p.replace(/^\n+/, "")));
         historyCache.set(key, hit);
       }
@@ -63,14 +88,14 @@ export async function gitInfo(cwd: string): Promise<GitInfo> {
     },
     async lastHistoryContent(path) {
       if (!isRepo) return null;
-      const rev = await git(cwd, ["log", "--all", "-1", "--format=%H", "--diff-filter=AM", "--", path]);
+      const rev = await git(cwd, ["log", ...LOG_SAFE, "--all", "-1", "--format=%H", "--diff-filter=AM", "--", path]);
       const sha = rev.out.trim();
       if (rev.code !== 0 || !/^[0-9a-f]{40,64}$/.test(sha)) return null;
       return new Promise((resolve) => {
         execFile(
           "git",
           [...SAFE, "show", `${sha}:./${path}`],
-          { cwd, encoding: "buffer", maxBuffer: 16 * 1024 * 1024, timeout: 60_000, windowsHide: true },
+          { cwd, encoding: "buffer", maxBuffer: 16 * 1024 * 1024, timeout: 60_000, windowsHide: true, env: gitEnv() },
           (err, stdout) => resolve(err ? null : stdout),
         );
       });

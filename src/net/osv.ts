@@ -1,6 +1,8 @@
 import { NetError, requestJson, type Http } from "./http.js";
 
 export const OSV = "https://api.osv.dev";
+/** OSV caps its own HTTP/1.1 answers at 32MiB; large advisories are legitimately MBs. */
+const OSV_MAX_BYTES = 32 * 1024 * 1024;
 const BATCH = 1000;
 
 export interface OsvQuery {
@@ -43,6 +45,7 @@ export async function osvQueryBatch(http: Http, queries: OsvQuery[]): Promise<Os
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
+          maxBytes: OSV_MAX_BYTES,
         });
       } catch (e) {
         const err = e as NetError;
@@ -101,7 +104,7 @@ export interface OsvVuln {
 export async function osvVuln(http: Http, id: string): Promise<OsvVuln | null> {
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      return await requestJson<OsvVuln>(http, `${OSV}/v1/vulns/${encodeURIComponent(id)}`);
+      return await requestJson<OsvVuln>(http, `${OSV}/v1/vulns/${encodeURIComponent(id)}`, { maxBytes: OSV_MAX_BYTES });
     } catch (e) {
       const err = e as NetError;
       if (err.kind === "offline" || (err.kind === "http" && err.status < 500)) return null;
