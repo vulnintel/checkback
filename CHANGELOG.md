@@ -32,11 +32,33 @@ First public release.
 - Command line: `checkback scan` prints a readable report in a terminal and JSON when piped
   (`--text`, `--json`), `--fail-on <severity>` for CI gates, `--help`, `--version` and suggestions
   for mistyped commands.
-- CycloneDX SBOM export (`checkback sbom`).
+- CycloneDX SBOM export (`checkback sbom`). `--upload-preview` prints what a VulnIntel key would
+  send without uploading anything (`--upload` still works as an alias).
 - Optional VulnIntel key: watch packages for new vulnerabilities, remediation tracker, 30-day
   result history.
 - Template duplicate, rule on/off, import/export, custom AI checklist sentences, and an ignore list
   stored outside the project.
+
+### Security
+
+Hardening from a self-audit before the first release:
+
+- Scanning a project can no longer run a program named in that project's own `.git/config` (for
+  example a signature-check helper). checkback runs git with hooks, pagers and such helpers turned
+  off, and without your VulnIntel key in its environment.
+- Symbolic links and junctions that point outside the project folder are not followed, including
+  inside `.next/static`.
+- Built-in rules no longer stall on crafted files: their regular expressions run in linear time.
+  Patterns from custom templates keep running with a time limit.
+- File names and paths from the scanned project reach your AI as quoted data, with a note that they
+  are not instructions. Wording from an imported template is marked as such in the MCP server too.
+- Private registries set up outside the project (`~/.npmrc`, pnpm and Yarn user config, pip config,
+  `npm_config_*` and `PIP_INDEX_URL` environment variables) are recognized, so those private package
+  names are not looked up on public registries.
+- Smaller fixes: size limits on lookup responses, keyed VulnIntel calls never follow redirects,
+  `requirements` includes (`-r`) follow only `.txt` and `.in` files, and the browser is opened
+  without the session token on its command line (outside Windows).
+- Runtime dependencies are pinned to exact versions.
 
 [Unreleased]: https://github.com/vulnintel/checkback/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/vulnintel/checkback/releases/tag/v0.1.0

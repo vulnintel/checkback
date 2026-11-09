@@ -46,7 +46,8 @@
     "web/index.html",
     "web/app.css",
     "web/favicon.svg",
-    "NOTICE"
+    "NOTICE",
+    "licenses"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json && tsc -p tsconfig.web.json",
@@ -56,9 +57,9 @@
   },
   "packageManager": "pnpm@10.33.0",
   "dependencies": {
-    "@cyclonedx/cyclonedx-library": "^10.4.0",
-    "smol-toml": "^1.9.1",
-    "yaml": "^2.9.1"
+    "@cyclonedx/cyclonedx-library": "10.4.0",
+    "smol-toml": "1.9.1",
+    "yaml": "2.9.1"
   },
   "devDependencies": {
     "@types/node": "^20.19.43",

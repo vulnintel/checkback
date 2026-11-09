@@ -1,6 +1,6 @@
 ---
 name: checkback
-description: Security check for this project with checkback — leaked keys, committed .env/key files, Supabase/Firebase rules, CORS, debug settings, vulnerable/malicious/missing packages — then fix with the user's approval and re-check. Use when the user asks for a security check, "보안 점검해줘", or to verify that security fixes worked.
+description: Security check for this project with checkback — leaked keys, committed .env/key files, Supabase/Firebase rules, CORS, debug settings, vulnerable/malicious/missing packages — then fix with the user's approval and re-check. Use when the user asks for a security check, "보안 점검해줘", or to re-check findings after fixes.
 ---
 
 # checkback security check
@@ -8,7 +8,7 @@ description: Security check for this project with checkback — leaked keys, com
 Answer in the user's language. Use only the `checkback` MCP tools for findings; the numbers and wording they return are the result.
 
 ## 1. Scan
-Call `scan`. Report the findings in the order returned, grouped as **confirmed** and **needs review** (`info` items only if asked). Keep the tool's titles, severities and `file:line`. Show the `notice` text as is.
+Call `scan`. Report the findings in the order returned, grouped as **confirmed** and **needs review** (`info` items only if asked). Keep the tool's titles, severities and `file:line`. Show the `notice` text as is, with one exception: show the paragraph that suggests connecting a free VulnIntel key only after the first `scan` in this conversation, and leave it out after later scans.
 
 ## 2. AI review (optional, only if the user wants it)
 Call `ai_check_prompt` and check those items by **reading code only** — do not edit, install or run anything. Report them in a separate section titled **"AI judgment"**, never mixed with scan findings. If your judgment disagrees with a scan finding, keep the scan finding and write "differs from engine judgment".

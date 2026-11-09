@@ -6,8 +6,13 @@ publishing. No npm token is stored anywhere.
 ## One-time setup (before the first release)
 
 Do these in order. Steps 3 and 4 have a deadline: an npm trusted publisher setting expires if it has
-not published within 2 days of being created.
+not published within 2 days of being created, so create it (step 3) only after every item that
+blocks the release is closed.
 
+0. **Check commit author emails before going public.** List them with
+   `git log --all --format='%an <%ae>%n%cn <%ce>' | sort -u`. No personal email may remain
+   (maintainer decision); use a GitHub `noreply` or project address, and rewrite history before the
+   repository is made public if one does.
 1. **Make the repository public.** npm adds provenance only for public repositories, and
    `/plugin marketplace add vulnintel/checkback` needs a public repository for users without access.
 2. **GitHub settings** (Settings of `vulnintel/checkback`):
