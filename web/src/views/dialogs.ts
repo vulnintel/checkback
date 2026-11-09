@@ -4,7 +4,7 @@
 import { api, ApiFail } from "../api.js";
 import { copyText, extLink, h, modal, replace, toast } from "../dom.js";
 import { t } from "../i18n.js";
-import { go, report, S, type GFinding } from "../state.js";
+import { go, report, S, type GFinding, type ScanView } from "../state.js";
 
 interface FixPrompt {
   text: string;
@@ -144,7 +144,7 @@ export function ignoreDialog(f: GFinding, done: () => void): void {
           if (!reason) return input.focus();
           try {
             await api("POST", "/api/ignore", { id: f.id, reason });
-            S.result!.findings = S.result!.findings.filter((x) => x.id !== f.id);
+            S.result = await api<ScanView>("GET", "/api/result"); // cards and recheck summary from one source
             S.selected.delete(f.id);
             d.close();
             done();

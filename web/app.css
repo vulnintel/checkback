@@ -1,10 +1,11 @@
-/* checkback local GUI — light to-do list. Brand: VulnIntel cyan. Severity colors are separate. */
+/* checkback local GUI — to-do list, light and dark (follows the OS). Brand: VulnIntel cyan.
+   Severity colors are separate. Every color is a token here; rules below never hard-code one. */
 :root {
   --eg1: #0fb2c4;
   --eg2: #0e9aa6;
   --eg3: #0b7d87;
   --egsoft: #d6f5f7;
-  --egtint: #eaf7f8;
+  --egtint: #eff9fa;
   --bg: #f6f8f9;
   --surface: #ffffff;
   --line: #dde3e6;
@@ -23,8 +24,50 @@
   --ext-bg: #f1ecfb;
   --ext: #4b2e83;
   --neutral-bg: #eef2f4;
+  --on-primary: #ffffff;
+  --primary-hover: #096a73;
+  --selected-bg: #f7fcfc;
+  --danger-line: #e3b4b6;
+  --backdrop: rgba(16, 24, 28, 0.45);
+  --toast-bg: #1b2529;
+  --toast-ink: #ffffff;
   --mono: ui-monospace, "Cascadia Mono", Consolas, "SFMono-Regular", Menlo, monospace;
   color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --eg1: #22c3d4;
+    --eg2: #2bb4c2;
+    --eg3: #5fd4e0;
+    --egsoft: #143c41;
+    --egtint: #13292d;
+    --bg: #0f1518;
+    --surface: #172024;
+    --line: #2a363b;
+    --line2: #3d4b51;
+    --ink: #e6edf0;
+    --ink2: #c3cfd4;
+    --muted: #9aabb2;
+    --crit-bg: #3d1517;
+    --crit: #ffa3a8;
+    --high-bg: #3a2410;
+    --high: #ffbd7a;
+    --med-bg: #332a0b;
+    --med: #f0d070;
+    --ok-bg: #0f2e1c;
+    --ok: #86dca6;
+    --ext-bg: #2a2140;
+    --ext: #cdb9f7;
+    --neutral-bg: #233035;
+    --on-primary: #062a2e;
+    --primary-hover: #8ae2eb;
+    --selected-bg: #132a2e;
+    --danger-line: #7a3337;
+    --backdrop: rgba(0, 0, 0, 0.6);
+    --toast-bg: #e6edf0;
+    --toast-ink: #10181b;
+    color-scheme: dark;
+  }
 }
 
 * { box-sizing: border-box; }
@@ -40,7 +83,7 @@ h3 { font-size: 15px; margin: 16px 0 6px; }
 p { margin: 6px 0; }
 a { color: var(--eg3); }
 :focus-visible { outline: 2px solid var(--eg3); outline-offset: 2px; }
-h1:focus { outline: none; }
+h1:focus, [data-autofocus]:focus { outline: none; }
 
 /* header */
 .top {
@@ -58,10 +101,6 @@ h1:focus { outline: none; }
 .brand .name { font-weight: 700; font-size: 18px; }
 .brand .by { color: var(--muted); font-size: 13px; }
 .top nav { display: flex; flex-wrap: wrap; gap: 4px; flex: 1; }
-@media (max-width: 560px) {
-  .top { justify-content: space-between; padding: 8px 16px; }
-  .top nav { order: 3; flex-basis: 100%; }
-}
 .nav-btn {
   border: 0;
   background: none;
@@ -120,10 +159,10 @@ ul.plain li:last-child { border-bottom: 0; }
   text-decoration: none;
 }
 .btn:hover { border-color: var(--eg2); }
-.btn.primary { background: var(--eg3); border-color: var(--eg3); color: #fff; }
-.btn.primary:hover { background: #096a73; }
+.btn.primary { background: var(--eg3); border-color: var(--eg3); color: var(--on-primary); }
+.btn.primary:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
 .btn.big { font-size: 16px; padding: 10px 22px; }
-.btn.danger { color: var(--crit); border-color: #e3b4b6; }
+.btn.danger { color: var(--crit); border-color: var(--danger-line); }
 .btn.link { border: 0; background: none; color: var(--eg3); text-decoration: underline; padding: 2px 4px; }
 .btn.ghost { border-color: transparent; background: none; }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -152,7 +191,7 @@ label.btn { user-select: none; }
 h2.sec { font-size: 17px; }
 .cards { display: flex; flex-direction: column; gap: 10px; }
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; }
-.card.selected { border-color: var(--eg2); background: #f7fcfc; }
+.card.selected { border-color: var(--eg2); background: var(--selected-bg); }
 .card-head { display: flex; align-items: center; gap: 10px; }
 .card-head input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--eg3); }
 .card-title { font-size: 16px; margin: 8px 0 2px; }
@@ -195,15 +234,15 @@ details.fold[open] summary { margin-bottom: 8px; }
 .steps li.now { color: var(--ink); font-weight: 600; border-left-color: var(--eg1); background: var(--egtint); }
 
 /* dialogs */
-dialog.dlg { border: 0; border-radius: 10px; padding: 0; width: min(640px, 92vw); color: var(--ink); }
+dialog.dlg { border: 0; border-radius: 10px; padding: 0; width: min(640px, 92vw); color: var(--ink); background: var(--surface); }
 dialog.dlg.wide { width: min(880px, 94vw); }
-dialog.dlg::backdrop { background: rgba(16, 24, 28, 0.45); }
+dialog.dlg::backdrop { background: var(--backdrop); }
 .dlg-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--line); }
 .dlg-head h2 { margin: 0; font-size: 18px; }
 .dlg-body { padding: 14px 20px; max-height: 70vh; overflow: auto; }
 .dlg-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--line); }
 .prompt { display: block; width: 100%; font: 13px/1.5 var(--mono); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; white-space: pre-wrap; margin: 8px 0; }
-fieldset.human { border: 1px solid #e3b4b6; border-radius: 6px; padding: 8px 12px; margin: 0 0 10px; }
+fieldset.human { border: 1px solid var(--danger-line); border-radius: 6px; padding: 8px 12px; margin: 0 0 10px; }
 fieldset.human legend { font-weight: 600; color: var(--crit); padding: 0 4px; }
 fieldset.human label { display: flex; padding: 3px 0; }
 .kv { display: grid; grid-template-columns: 160px 1fr; gap: 6px 12px; margin: 12px 0; }
@@ -228,5 +267,14 @@ table.rules td { border-bottom: 1px solid var(--line); padding: 7px 8px; vertica
 .data-table li { margin: 6px 0; }
 .foot { max-width: 960px; margin: 0 auto; padding: 8px 20px 96px; font-size: 13px; color: var(--ink2); }
 .foot p { margin: 2px 0; }
-.toast { position: fixed; left: 50%; bottom: 76px; transform: translateX(-50%); max-width: min(640px, 92vw); margin: 0; padding: 10px 16px; border-radius: 6px; background: var(--ink); color: #fff; font-size: 14px; white-space: pre-wrap; }
+.toast { position: fixed; left: 50%; bottom: 76px; transform: translateX(-50%); max-width: min(640px, 92vw); margin: 0; padding: 10px 16px; border-radius: 6px; background: var(--toast-bg); color: var(--toast-ink); font-size: 14px; white-space: pre-wrap; }
 .toast:empty { display: none; }
+
+/* narrow screens (375 / 320 px): header on two rows, tighter gutters — after the rules it overrides */
+@media (max-width: 560px) {
+  .top { justify-content: space-between; padding: 8px 16px; }
+  .top nav { order: 3; flex-basis: 100%; }
+  main { padding-left: 12px; padding-right: 12px; }
+  .panel { padding: 18px 14px; }
+  .kv { grid-template-columns: minmax(0, 100px) 1fr; }
+}

@@ -83,10 +83,12 @@ const SLOW_MS = 15_000; // external lookups past this get a "what we wait for / 
 export function progressView(): HTMLElement {
   const p = t().progress;
   const list = h("ul", { class: "steps" });
-  const status = h("p", { class: "status", "aria-live": "polite" }, t().loading);
+  const status = h("p", { class: "status" }, t().loading); // ticks every 400 ms: not a live region
+  const said = h("p", { class: "visually-hidden", "aria-live": "polite" }); // phase changes only
+
   const stop = h("button", { class: "btn", type: "button", onclick: () => void api("POST", "/api/scan/stop").catch(report) }, p.stop);
   const slow = h("div", { class: "note", hidden: true }, h("p", {}, p.slow), h("p", {}, p.slowSkip));
-  const view = h("section", { class: "panel narrow" }, h("h1", { tabindex: "-1" }, p.title), list, status, slow, h("p", { class: "muted small" }, p.offlineNote), stop);
+  const view = h("section", { class: "panel narrow" }, h("h1", { tabindex: "-1" }, p.title), list, status, said, slow, h("p", { class: "muted small" }, p.offlineNote), stop);
 
   const tick = async (): Promise<void> => {
     if (S.view !== "progress") return;
@@ -100,6 +102,8 @@ export function progressView(): HTMLElement {
         ),
       );
       status.textContent = [j.files ? p.files(j.files) : "", p.elapsed(Math.round((j.elapsed_ms ?? 0) / 1000))].filter(Boolean).join(" · ");
+      const now = j.running ? (p.phases[j.phase ?? "files"] ?? "") : "";
+      if (said.textContent !== now) said.textContent = now;
       slow.hidden = !(j.running && j.phase === "external" && (j.elapsed_ms ?? 0) > SLOW_MS);
       if (j.running) return void setTimeout(() => void tick(), 400);
       if (j.error) {

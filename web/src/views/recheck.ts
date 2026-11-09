@@ -72,7 +72,7 @@ export function recheckSummary(): HTMLElement | null {
   const secrets = c.resolved.some((x) => x.confirm_revocation);
   return h(
     "div",
-    { class: "recheck", role: "region", "aria-label": rc.label },
+    { class: "recheck", role: "region", "aria-label": rc.label, tabindex: "-1", "data-autofocus": "" },
     h("p", { class: "recheck-counts" }, parts.map(([label, v, cls]) => h("span", { class: v ? `badge ${cls}` : "badge" }, `${label} ${v}`))),
     h(
       "p",

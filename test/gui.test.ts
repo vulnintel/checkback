@@ -411,6 +411,13 @@ describe("S9 / S8 prompts and the fix-request snapshot", () => {
     expect(again.resolved[0].revoked).toBe(true);
     expect(again.counts).toEqual(cmp.counts);
     expect((await call("POST", "/api/revoked", { id: "../x", done: true })).status).toBe(400);
+    // ignoring a card takes it out of the summary at once (§7-8: ignored items count in no state)
+    const c = (third.findings as { id: string; recheck?: string; location: { file: string } }[]).find((f) => f.location.file === "src/c.ts")!;
+    expect(c.recheck).toBe("remaining");
+    expect((await call("POST", "/api/ignore", { id: c.id, reason: "test fixture" })).status).toBe(200);
+    const after = (await call<Record<string, any>>("GET", "/api/result")).json;
+    expect(after.compare.counts.remaining).toBe(cmp.counts.remaining - 1);
+    expect((after.findings as { id: string }[]).some((f) => f.id === c.id)).toBe(false);
   });
 
   it("AC73 the S8 text equals MCP ai_check_prompt for the same template", async () => {

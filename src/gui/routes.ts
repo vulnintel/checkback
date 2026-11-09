@@ -289,7 +289,13 @@ export function createRoutes(ctx: GuiContext): { routes: Record<string, Route>; 
       const reason = str(b.reason).trim();
       if (!id || !reason) throw fail(400, "reason_required");
       await addIgnore(cwd, id, reason, appDir);
-      if (last) last.result.findings = last.result.findings.filter((f) => f.id !== id);
+      if (last) {
+        const r = last.result;
+        const gone = r.findings.find((f) => f.id === id);
+        r.findings = r.findings.filter((f) => f.id !== id);
+        // §7-8: an ignored item counts in no recheck state — keep the summary in step with the cards
+        if (gone?.recheck && r.compare) r.compare.counts[gone.recheck]--;
+      }
       return {};
     },
     async "POST /api/unignore"(b) {

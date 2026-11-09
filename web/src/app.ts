@@ -60,8 +60,9 @@ const VIEWS: Record<View, () => HTMLElement> = {
 function render(): void {
   const main = h("main", { id: "main" }, VIEWS[S.view]());
   replace(app, header(), main, footer());
-  // Move focus to the new view's heading so keyboard and screen-reader users land in it.
-  (main.querySelector("h1") as HTMLElement | null)?.focus();
+  // Move focus to the new view's heading (or the recheck summary above it) so keyboard and
+  // screen-reader users land at the top of it.
+  (main.querySelector("[data-autofocus], h1") as HTMLElement | null)?.focus();
 }
 
 async function boot(): Promise<void> {
