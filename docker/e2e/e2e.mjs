@@ -149,6 +149,15 @@ await check("cli: unknown command prints usage to stderr and exits 2", () => {
   eq(r.code, 2, "exit code");
   assert(/usage: checkback/.test(r.err), "no usage on stderr");
 });
+await check("cli: a typo gets the closest command / option suggested, exit 2", () => {
+  const c = run(["scna"], { timeoutMs: 15_000 });
+  eq(c.code, 2, "exit code (command)");
+  assert(/Did you mean "scan"\?/.test(c.err), `no command suggestion: ${JSON.stringify(c.err.slice(0, 200))}`);
+  const o = run(["scan", "--fail-of", "high"], { timeoutMs: 15_000 });
+  eq(o.code, 2, "exit code (option)");
+  assert(/Did you mean "--fail-on"\?/.test(o.err), `no option suggestion: ${JSON.stringify(o.err.slice(0, 200))}`);
+  eq(run(["scan", "--fail-on", "huge"], { timeoutMs: 15_000 }).code, 2, "exit code (bad value)");
+});
 if (MODE === "online") {
   await check("cli: consent is refused without a TTY and nothing is stored (AC37)", () => {
     const r = run(["consent"], { timeoutMs: 15_000 });
@@ -181,6 +190,23 @@ await check("cli: scan JSON has no secret values or masked values", () => {
 await check("cli: scan --lang ko returns Korean titles", () => {
   const j = JSON.parse(run(["scan", "--lang", "ko"], { timeoutMs: 90_000 }).out);
   assert(j.findings.some((f) => /[가-힣]/.test(f.title)), "no Hangul title");
+});
+await check("cli: scan --text prints a readable report without secrets, masked values or colors", () => {
+  const r = run(["scan", "--text"], { timeoutMs: 90_000 });
+  eq(r.code, 0, `exit code (stderr ${r.err.slice(0, 300)})`);
+  assert(/^\d+ things? to fix {3}CRITICAL \d+ · HIGH \d+ · MEDIUM \d+/.test(r.out), `no summary: ${JSON.stringify(r.out.slice(0, 200))}`);
+  for (const s of ["To fix", "src/lib/ai.ts:2", "firestore.rules", "npx checkback"]) assert(r.out.includes(s), `missing ${JSON.stringify(s)}`);
+  assert(!r.out.includes("\x1b["), "ANSI color codes in non-TTY output");
+  noSecrets(r.out, "scan --text");
+  const ko = run(["scan", "--text", "--lang", "ko"], { timeoutMs: 90_000 });
+  assert(/^고칠 일 \d+개/.test(ko.out) && ko.out.includes("긴급"), `no Korean report: ${JSON.stringify(ko.out.slice(0, 200))}`);
+});
+await check("cli: scan --fail-on high exits 1 with a reason on stderr, JSON on stdout", () => {
+  const r = run(["scan", "--fail-on", "high"], { timeoutMs: 90_000 });
+  eq(r.code, 1, "exit code");
+  assert(/things? to fix at high or above \(--fail-on high\)/.test(r.err), `no reason on stderr: ${JSON.stringify(r.err.slice(0, 200))}`);
+  expectFindings(JSON.parse(r.out).findings, "scan --fail-on");
+  noSecrets(r.out, "scan --fail-on");
 });
 await check("cli: sbom is CycloneDX >= 1.4 with the locked package as a purl", () => {
   const r = run(["sbom"], { timeoutMs: 30_000 });

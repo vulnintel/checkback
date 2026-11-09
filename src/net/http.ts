@@ -1,7 +1,9 @@
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { readJson, writeJson } from "../appdata.js";
 
-export const VERSION = "0.0.0";
+/** package.json is the single source: src/net/ (tests) and dist/net/ (build) are both two levels below it. */
+export const VERSION: string = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")).version;
 export const USER_AGENT = `checkback/${VERSION} (+https://github.com/vulnintel/checkback)`;
 export type Fetch = typeof fetch;
 
