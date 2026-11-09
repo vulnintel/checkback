@@ -29,7 +29,12 @@ const RULE_CASES: Record<string, Case[]> = {
     { name: "service_role JWT", files: () => ({ "src/db.ts": `createClient(url, "${K.serviceRoleJwt()}")` }), expect: [c("critical", "confirmed")] },
     { name: "sb_secret_", files: () => ({ "src/db.ts": `createClient(url, "${K.sbSecret()}")` }), expect: [c("critical", "confirmed")] },
     { name: "authenticated JWT", files: () => ({ "src/db.ts": `const t = "${jwt({ role: "authenticated" })}"` }), expect: [] },
-    { name: "legacy anon JWT is info only (AC8)", files: () => ({ "src/db.ts": `createClient(url, "${K.anonJwt()}")` }), expect: [c("critical", "info")] },
+    { name: "legacy anon JWT is not a service key (B2)", files: () => ({ "src/db.ts": `createClient(url, "${K.anonJwt()}")` }), expect: [] },
+  ],
+  "supabase-anon-key": [
+    { name: "legacy anon JWT is info only (AC8)", files: () => ({ "src/db.ts": `createClient(url, "${K.anonJwt()}")` }), expect: [c("medium", "info")] },
+    { name: "service_role JWT is not the anon rule", files: () => ({ "src/db.ts": `createClient(url, "${K.serviceRoleJwt()}")` }), expect: [] },
+    { name: "sb_publishable_ is allowlisted", files: () => ({ "src/db.ts": `createClient(url, "${K.sbPublishable()}")` }), expect: [] },
   ],
   "secret-supabase-pat": [
     { name: "sbp_ token", files: () => ({ ".mcp.json": `{"args": ["--access", "${K.sbPat()}"]}` }), expect: [c("critical", "confirmed")] },
@@ -214,7 +219,8 @@ describe("AC8 public keys and variable names", () => {
     const r = await scanDefault(dir);
     expect(r.stats.allowed_public_keys).toBe(1);
     expect(r.findings.filter((f) => f.confidence !== "info")).toEqual([]);
-    expect(byRule(r, "secret-supabase-service-role")[0]!.notes).toContain("legacy_anon_key");
+    expect(byRule(r, "secret-supabase-service-role")).toEqual([]);
+    expect(byRule(r, "supabase-anon-key")[0]!.notes).toContain("legacy_anon_key");
   });
 
   it("anon JWT under a public env name is info only; service_role JWT under any name is critical", async () => {
@@ -224,12 +230,12 @@ describe("AC8 public keys and variable names", () => {
     });
     const r = await scanDefault(dir);
     const sr = byRule(r, "secret-supabase-service-role").map((f) => [f.location!.line, f.confidence]);
-    // not a git repo → .env value rules are review (§5), anon stays info
+    // not a git repo → .env value rules are review (§5); the anon key is its own info finding (B2)
     expect(sr).toEqual([
       [2, "review"],
       [3, "review"],
-      [1, "info"],
     ]);
+    expect(byRule(r, "supabase-anon-key").map((f) => [f.location!.line, f.confidence])).toEqual([[1, "info"]]);
     expect(byRule(r, "secret-public-env-prefix")).toEqual([]);
   });
 });

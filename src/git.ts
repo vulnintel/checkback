@@ -103,6 +103,12 @@ export async function gitInfo(cwd: string): Promise<GitInfo> {
   };
 }
 
+/** Untracked paths git ignores, CWD-relative (whole ignored folders end with "/"). Empty outside a repo. */
+export async function ignoredUntracked(cwd: string): Promise<Set<string>> {
+  const r = await git(cwd, ["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"]);
+  return r.code === 0 ? new Set(splitZ(r.out)) : new Set();
+}
+
 /** Template glob → git pathspecs with the same meaning (basename globs match at any depth; braces expanded). */
 export function globToPathspecs(glob: string): string[] {
   return expandBraces(glob).map((g) => `:(glob)${g.includes("/") ? g : `**/${g}`}`);

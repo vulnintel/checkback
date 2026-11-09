@@ -4,7 +4,7 @@ import type { Lang } from "./types.js";
 
 export const DATA_TABLE: Record<Lang, string> = {
   ko: [
-    "[데이터 전송] 코드·파일 경로는 어디로도 보내지 않습니다.",
+    "[데이터 전송] 코드·파일 경로는 어떤 서버로도 보내지 않습니다. 파일:줄은 아래 '사용자의 AI' 항목에만 들어갑니다.",
     "- api.osv.dev (취약 의존성·악성 패키지 검사): 외부 조회 대상 패키지의 생태계·이름·버전. 사설 패키지 이름은 보내지 않습니다.",
     "- registry.npmjs.org · api.npmjs.org · pypi.org (없는 패키지 검사): 외부 조회 대상 패키지 이름(lock에 없는 manifest 이름, 판별을 통과한 import 이름 포함).",
     "- api.vulnintelapp.com 공개 조회 (우선순위·설명, 키 불필요): OSV 결과의 CVE/GHSA ID와 화면 언어만. 요청 IP와 ID 목록이 서버 접근 로그에 남을 수 있고, ID 목록으로 사용 중인 취약 구성요소를 추정할 수 있습니다.",
@@ -13,7 +13,7 @@ export const DATA_TABLE: Record<Lang, string> = {
     "각 외부 조회는 설정에서 따로 끌 수 있습니다.",
   ].join("\n"),
   en: [
-    "[Data transfer] Code and file paths are never sent anywhere.",
+    "[Data transfer] Code and file paths are never sent to any server. File:line appears only in what goes to your AI (below).",
     "- api.osv.dev (vulnerable / malicious dependency check): ecosystem, name and version of packages in the lookup scope. Private package names are not sent.",
     "- registry.npmjs.org · api.npmjs.org · pypi.org (missing package check): names of packages in the lookup scope (incl. manifest names missing from the lock and filtered import names).",
     "- api.vulnintelapp.com public lookup (priority and descriptions, no key): only CVE/GHSA IDs from OSV results and the UI language. The request IP and ID list may stay in server access logs, and the ID list can hint at which vulnerable components you use.",

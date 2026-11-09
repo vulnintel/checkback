@@ -1,5 +1,6 @@
 import { lstat, readdir, readFile, realpath, stat } from "node:fs/promises";
 import { join, sep } from "node:path";
+import { ignoredUntracked } from "./git.js";
 
 export interface FileEntry {
   /** CWD-relative, "/"-separated. */
@@ -27,9 +28,13 @@ export const MAX_LINE_CHARS = 1024 * 1024;
 /**
  * Walk `root` (already realpath'd). Symlinks and junctions are never followed: links that
  * point outside CWD must not be read, and links inside CWD reach files we walk anyway.
+ * Skipped: other checkouts inside the tree (a `.git` file marks a nested worktree or submodule;
+ * `.claude/worktrees` is Claude Code's worktree folder) and gitignored untracked paths — except
+ * browser build output (gitignored, but deployed) and `.env*` (local-only .env is judged, §5).
  */
 export async function collectFiles(root: string): Promise<FileEntry[]> {
   const out: FileEntry[] = [];
+  const ignored = await ignoredUntracked(root);
   async function walk(abs: string, rel: string, build: boolean): Promise<void> {
     let ents;
     try {
@@ -37,18 +42,21 @@ export async function collectFiles(root: string): Promise<FileEntry[]> {
     } catch {
       return;
     }
+    if (rel && ents.some((e) => e.name === ".git" && e.isFile())) return;
     ents.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
     for (const e of ents) {
       if (e.isSymbolicLink()) continue;
       const childAbs = join(abs, e.name);
       const childRel = rel ? `${rel}/${e.name}` : e.name;
       if (e.isDirectory()) {
-        if (SKIP_DIRS.has(e.name)) continue;
+        if (SKIP_DIRS.has(e.name) || (e.name === "worktrees" && /(^|\/)\.claude$/.test(rel))) continue;
         if (e.name === ".next") {
           const st = join(childAbs, "static");
           if (await isPlainDirInside(st, root)) await walk(st, `${childRel}/static`, true);
-        } else await walk(childAbs, childRel, build || BUILD_DIRS.has(e.name));
+        } else if (BUILD_DIRS.has(e.name)) await walk(childAbs, childRel, true);
+        else if (build || !ignored.has(`${childRel}/`)) await walk(childAbs, childRel, build);
       } else if (e.isFile()) {
+        if (!build && ignored.has(childRel) && !/^\.env(\.|$)/.test(e.name)) continue;
         out.push({ rel: childRel, abs: childAbs, build });
       }
     }
@@ -117,8 +125,17 @@ export function isExampleOrDoc(rel: string): boolean {
   return /\.(example|sample|template)(\.|$)/i.test(b) || /^readme/i.test(b) || /(^|\/)docs\/.*\.mdx?$/i.test(rel);
 }
 
+/** Tests, fixtures, mocks and load/e2e test scripts (a mock server's `debug=True` is not production). */
 export function isTestPath(rel: string): boolean {
-  return /(^|\/)(test|tests|__tests__|fixtures)\//.test(rel) || /\.(test|spec)\./.test(base(rel));
+  return (
+    /(^|\/)(test|tests|__tests__|fixtures|__mocks__|mocks?|e2e|(stress|load)[-_]?tests?)\//.test(rel) ||
+    /\.(test|spec)\.|^mock[-_.]|[-_.]mock\./i.test(base(rel))
+  );
+}
+
+/** Third-party code copied into the repo: vendor folders and prebuilt bundles (`redoc.standalone.js`, `*.min.js`). */
+export function isVendorPath(rel: string): boolean {
+  return /(^|\/)(vendor|vendors|third[-_]party)\//.test(rel) || /\.(min|standalone|bundle|umd)\.[cm]?js$/.test(base(rel));
 }
 
 /** A real (non-example) dotenv file. */

@@ -27,7 +27,8 @@ export async function readJson<T>(file: string, fallback: T): Promise<T> {
 /** Write via temp file + rename so a crash never leaves a half-written file. */
 export async function writeJson(file: string, data: unknown): Promise<void> {
   await mkdir(dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.tmp`;
+  // Unique per call: two writes of the same file in one process must not share a temp file.
+  const tmp = `${file}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
   await writeFile(tmp, JSON.stringify(data, null, 2), { mode: 0o600 });
   await rename(tmp, file);
 }
@@ -48,10 +49,21 @@ export async function readConfig(appDir: string): Promise<LocalConfig> {
   return typeof c === "object" && c !== null ? (c as LocalConfig) : {};
 }
 
-export async function updateConfig(appDir: string, patch: Partial<LocalConfig>): Promise<LocalConfig> {
-  const next = { ...(await readConfig(appDir)), ...patch };
-  await writeJson(join(appDir, "config.json"), next);
-  return next;
+let configQueue: Promise<unknown> = Promise.resolve();
+
+/**
+ * Read-modify-write, serialized within the process: concurrent updates (GUI consent, then a language
+ * change) each see the previous write, so none is lost.
+ * shortcut: no cross-process lock (GUI and MCP running at once can still race); add a lock file if that shows up.
+ */
+export function updateConfig(appDir: string, patch: Partial<LocalConfig>): Promise<LocalConfig> {
+  const run = configQueue.then(async () => {
+    const next = { ...(await readConfig(appDir)), ...patch };
+    await writeJson(join(appDir, "config.json"), next);
+    return next;
+  });
+  configQueue = run.catch(() => undefined);
+  return run;
 }
 
 export const hasConsent = (c: LocalConfig): boolean => (c.consent?.version ?? 0) >= CONSENT_VERSION;
