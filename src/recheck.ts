@@ -11,7 +11,7 @@ import { readText, type FileEntry } from "./files.js";
 import type { CheckedRule, Confidence, Finding, RecheckStatus } from "./types.js";
 import { satisfies } from "./versions.js";
 
-export type StoredFinding = Omit<Finding, "masked_match" | "recheck" | "recheck_note" | "carried" | "previous_version">;
+export type StoredFinding = Omit<Finding, "masked_match" | "recheck" | "recheck_note" | "carried" | "previous_version" | "baseline_id">;
 
 export interface LockState {
   path: string;
@@ -61,7 +61,7 @@ export const lastScanFile = (appDir: string, cwd: string): Promise<string> => fi
 export const snapshotFile = (appDir: string, cwd: string): Promise<string> => file(appDir, cwd, "fix-baseline");
 
 export function storedFinding(f: Finding): StoredFinding {
-  const { masked_match: _m, recheck: _r, recheck_note: _n, carried: _c, previous_version: _p, ...rest } = f;
+  const { masked_match: _m, recheck: _r, recheck_note: _n, carried: _c, previous_version: _p, baseline_id: _b, ...rest } = f;
   return rest;
 }
 
@@ -191,9 +191,10 @@ export function compareWith(
     const c = checked.find((x) => x.rule_id === ruleId);
     return !!c && c.ran && !c.reason;
   };
-  const mark = (f: Finding, s: RecheckStatus, note?: string): void => {
+  const mark = (f: Finding, s: RecheckStatus, note?: string, from?: StoredFinding): void => {
     f.recheck = s;
     if (note) f.recheck_note = note;
+    if (from && from.id !== f.id) f.baseline_id = from.id;
     used.add(f.id);
     counts[s]++;
   };
@@ -240,7 +241,7 @@ export function compareWith(
     if (secretish(b)) {
       const c = cur.find((f) => fresh(f) && (f.secret_kind || f.rule_id === "key-file-committed"));
       if (c) {
-        mark(c, "same_key", "same_key_remains");
+        mark(c, "same_key", "same_key_remains", b);
         c.severity = b.severity;
         c.confidence = b.confidence; // stays a fix item even in a local-only/test/example location
         continue;
@@ -249,9 +250,9 @@ export function compareWith(
       const c = cur.find((f) => fresh(f) && f.rule_id === b.rule_id);
       if (c) {
         if (CONF_RANK[c.confidence] > CONF_RANK[b.confidence]) {
-          mark(c, "downgraded", "moved_to_lower_confidence");
+          mark(c, "downgraded", "moved_to_lower_confidence", b);
           c.confidence = b.confidence;
-        } else mark(c, "moved", "moved_elsewhere");
+        } else mark(c, "moved", "moved_elsewhere", b);
         continue;
       }
     }
@@ -262,7 +263,7 @@ export function compareWith(
     const bumped = bumpedTo(b);
     if (bumped) {
       bumped.previous_version = b.version!;
-      mark(bumped, "remaining", "version_bumped_still_vulnerable");
+      mark(bumped, "remaining", "version_bumped_still_vulnerable", b);
       continue;
     }
     counts.resolved++;

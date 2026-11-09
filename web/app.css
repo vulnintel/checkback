@@ -46,7 +46,8 @@ h1:focus { outline: none; }
 .top {
   display: flex;
   align-items: center;
-  gap: 24px;
+  flex-wrap: wrap;
+  gap: 8px 24px;
   padding: 10px 24px;
   background: var(--surface);
   border-top: 3px solid var(--eg1);
@@ -56,7 +57,11 @@ h1:focus { outline: none; }
 .brand .mark { width: 12px; height: 12px; border-radius: 3px; background: var(--eg1); align-self: center; }
 .brand .name { font-weight: 700; font-size: 18px; }
 .brand .by { color: var(--muted); font-size: 13px; }
-.top nav { display: flex; gap: 4px; flex: 1; }
+.top nav { display: flex; flex-wrap: wrap; gap: 4px; flex: 1; }
+@media (max-width: 560px) {
+  .top { justify-content: space-between; padding: 8px 16px; }
+  .top nav { order: 3; flex-basis: 100%; }
+}
 .nav-btn {
   border: 0;
   background: none;
@@ -65,6 +70,7 @@ h1:focus { outline: none; }
   color: var(--ink2);
   cursor: pointer;
   border-bottom: 2px solid transparent;
+  white-space: nowrap;
 }
 .nav-btn:hover { color: var(--eg3); }
 .nav-btn.active { color: var(--eg3); font-weight: 600; border-bottom-color: var(--eg1); }
@@ -153,6 +159,14 @@ h2.sec { font-size: 17px; }
 .card-pkg { font-weight: 600; margin: 2px 0; }
 .card-sum { color: var(--ink2); margin: 2px 0; }
 .loc { font-family: var(--mono); font-size: 13px; color: var(--ink2); word-break: break-all; }
+/* recheck summary (§7-8) */
+.recheck { background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--eg1); border-radius: 8px; padding: 12px 16px; margin-bottom: 18px; }
+.recheck-counts { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 4px; }
+.recheck-counts .badge { font-size: 14px; padding: 3px 10px; }
+.recheck details.fold { margin: 10px 0 4px; }
+.recheck .loc { display: block; }
+.card-note { color: var(--ink2); margin: 4px 0 0; }
+h2.sec.others { border-top: 1px solid var(--line); padding-top: 18px; margin-top: 28px; }
 .card-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
 details.fold { margin: 14px 0; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; }
 details.fold summary { cursor: pointer; font-weight: 600; color: var(--ink2); }
@@ -176,6 +190,7 @@ details.fold[open] summary { margin-bottom: 8px; }
 /* progress */
 .steps { list-style: none; padding: 0; margin: 16px 0; }
 .steps li { display: flex; justify-content: space-between; padding: 8px 12px; border-left: 3px solid var(--line); color: var(--muted); }
+.steps li > span + span { white-space: nowrap; margin-left: 12px; }
 .steps li.done { color: var(--ink2); border-left-color: var(--eg2); }
 .steps li.now { color: var(--ink); font-weight: 600; border-left-color: var(--eg1); background: var(--egtint); }
 

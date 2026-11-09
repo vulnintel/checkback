@@ -1,7 +1,7 @@
 // Stage 7 local web GUI (§10-1 server security, §4 screens' API, §6-2 templates). AC numbers per §13.
 
 import { spawn } from "node:child_process";
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -176,6 +176,11 @@ describe("AC4 headers and cookie", () => {
     expect(api.headers["cache-control"]).toBe("no-store");
     expect(api.headers["content-security-policy"]).toBe("default-src 'self'; frame-ancestors 'none'");
     expect(api.headers["x-content-type-options"]).toBe("nosniff");
+    // the page names a same-origin icon, so the browser never asks for a missing /favicon.ico
+    expect(html.text).toMatch(/<link rel="icon" href="\/favicon\.svg"/);
+    const icon = await raw(g.port, "GET", "/favicon.svg");
+    expect(icon.status).toBe(200);
+    expect(icon.headers["content-type"]).toBe("image/svg+xml");
   });
 });
 
@@ -370,6 +375,42 @@ describe("S9 / S8 prompts and the fix-request snapshot", () => {
     expect((await call("POST", "/api/fix-request", { ids })).status).toBe(400);
     expect((await call("POST", "/api/fix-request", { ids: ids.slice(0, 2) })).status).toBe(200);
     expect((await readSnapshot(dir, appDir))?.requested.sort()).toEqual(ids.slice(0, 2).sort());
+  });
+
+  it("S3 recheck: no compare on a first scan; previous-scan baseline; fix-request baseline with pairing and the revocation tick", async () => {
+    const appDir = tempDir();
+    const keys = [K.github(), K.github(), K.openai()];
+    const dir = project({ "src/a.ts": `export const a = "${keys[0]}";\n`, "src/b.ts": `export const b = "${keys[1]}";\n`, "src/c.ts": `export const c = "${keys[2]}";\n` });
+    const { call, scanNow } = await client(await gui(dir, appDir));
+    expect((await scanNow()).compare).toBeUndefined();
+    const second = await scanNow();
+    expect(second.compare).toMatchObject({ baseline: "previous", requested: [], resolved: [] });
+    expect(second.compare.counts.remaining).toBe(3);
+    const idOf = (file: string): string => (second.findings as { id: string; location: { file: string } }[]).find((f) => f.location.file === file)!.id;
+    const [a, b] = [idOf("src/a.ts"), idOf("src/b.ts")];
+    expect((await call("POST", "/api/fix-request", { ids: [a, b] })).status).toBe(200);
+    // the AI removed a's key, moved b's key to another file, left c alone
+    writeFileSync(join(dir, "src/a.ts"), "export const a = process.env.A;\n");
+    rmSync(join(dir, "src/b.ts"));
+    writeFileSync(join(dir, "src/b2.ts"), `export const b = "${keys[1]}";\n`);
+    const third = await scanNow();
+    const cmp = third.compare;
+    expect(cmp.baseline).toBe("fix_request");
+    expect(Date.parse(cmp.baseline_at)).toBeGreaterThan(0);
+    expect([...cmp.requested].sort()).toEqual([a, b].sort());
+    expect(cmp.counts).toMatchObject({ resolved: 1, same_key: 1, remaining: 1, new: 0 });
+    expect(cmp.resolved).toEqual([expect.objectContaining({ id: a, location: { file: "src/a.ts", line: 1 }, confirm_revocation: true, revoked: false })]);
+    // a key moved by the AI still belongs to the fix request (§7-7-3)
+    expect((third.findings as { recheck?: string; baseline_id?: string }[]).find((f) => f.recheck === "same_key")?.baseline_id).toBe(b);
+    const text = JSON.stringify(third);
+    for (const k of keys) expect(text).not.toContain(k);
+    expect(text).not.toContain("value_hash");
+    // §7-8: the revocation tick is a local note, not a verdict input
+    expect((await call("POST", "/api/revoked", { id: a, done: true })).status).toBe(200);
+    const again = (await call<Record<string, any>>("GET", "/api/result")).json.compare;
+    expect(again.resolved[0].revoked).toBe(true);
+    expect(again.counts).toEqual(cmp.counts);
+    expect((await call("POST", "/api/revoked", { id: "../x", done: true })).status).toBe(400);
   });
 
   it("AC73 the S8 text equals MCP ai_check_prompt for the same template", async () => {

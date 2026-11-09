@@ -1,0 +1,62 @@
+name: Release
+
+# Push a tag vX.Y.Z → verify (versions, build, test) → a maintainer approves the `npm` environment →
+# publish with npm trusted publishing (OIDC, no token) and provenance.
+# Setup checklist: docs/RELEASING.md
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: Tag, package, plugin and MCP pin carry the same version
+        run: |
+          node -e '
+            const fs = require("fs");
+            const v = require("./package.json").version;
+            const plugin = JSON.parse(fs.readFileSync("plugin/.claude-plugin/plugin.json", "utf8")).version;
+            const pin = JSON.parse(fs.readFileSync("plugin/.mcp.json", "utf8")).mcpServers.checkback.args[1];
+            const bad = [["tag", process.env.GITHUB_REF_NAME, "v" + v], ["plugin.json", plugin, v], [".mcp.json", pin, "checkback@" + v]].filter(([, a, b]) => a !== b);
+            for (const [what, a, b] of bad) console.error(`${what}: ${a} != ${b}`);
+            process.exit(bad.length ? 1 : 0);'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm test
+      - run: pnpm e2e:docker
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: npm # manual approval
+    permissions:
+      contents: read
+      id-token: write # OIDC for npm trusted publishing and provenance
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24 # trusted publishing needs Node 22.14+; npm docs use 24
+          registry-url: https://registry.npmjs.org
+      - run: npm install -g npm@11.5.1 # trusted publishing needs npm 11.5.1 or later
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      # Tests ran in `verify`; skip the prepublishOnly hook so they do not run again here.
+      # Provenance is added automatically for OIDC publishes from a public repository.
+      # The npm trusted publisher must have "Allow npm publish" ticked (settings created after
+      # 2026-09-03 default to staged publishing only, which rejects a plain `npm publish`).
+      - run: npm publish --access public --ignore-scripts

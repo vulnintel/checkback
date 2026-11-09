@@ -2,7 +2,7 @@
   "mcpServers": {
     "checkback": {
       "command": "npx",
-      "args": ["-y", "checkback@0.0.0", "mcp"]
+      "args": ["-y", "checkback@0.1.0", "mcp"]
     }
   }
 }

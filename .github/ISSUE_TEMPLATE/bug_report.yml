@@ -1,0 +1,48 @@
+name: Bug report
+description: Something in checkback does not work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Do not paste secret values, tokens, `.env` contents or private code.** Describe them by kind and location, for example "an OpenAI key in `src/lib/ai.ts:3`".
+        Vulnerabilities in checkback itself go to [private reporting](https://github.com/vulnintel/checkback/security/advisories/new).
+  - type: input
+    id: version
+    attributes:
+      label: checkback version
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where
+      options:
+        - Web screen (npx checkback)
+        - CLI (scan, sbom, consent, ...)
+        - MCP server
+        - Claude Code plugin
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: OS and Node.js version
+      placeholder: "Windows 11, Node 22.12.0"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: A minimal project layout that shows the problem helps most.
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: Expected and actual result
+    validations:
+      required: true

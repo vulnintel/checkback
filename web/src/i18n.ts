@@ -55,6 +55,8 @@ const ko = {
     stopped: "검사를 중지했습니다.",
     failed: "검사하지 못했습니다. 터미널 메시지를 확인하세요.",
     offlineNote: "외부 조회가 실패해도 검사는 멈추지 않고 그 단계만 건너뜁니다.",
+    slow: "OSV · 패키지 레지스트리 응답과 VulnIntel 우선순위 보강(취약점마다 약 1초)을 기다리는 중입니다. 패키지가 많으면 몇 분 걸릴 수 있습니다.",
+    slowSkip: "[중지]하면 이번 검사 결과는 남지 않습니다. 기다리지 않으려면 [설정]에서 외부 조회를 끄고 다시 검사하세요.",
   },
 
   result: {
@@ -171,6 +173,26 @@ const ko = {
     } as Record<string, string>,
     bumped: (from: string, to: string, fixed?: string) =>
       `${from} → ${to}로 올렸지만 아직 취약합니다. ${fixed ? `${fixed} 이상으로 올리세요.` : "아직 수정 버전이 없습니다."}`,
+  },
+
+  recheck: {
+    label: "재검사 결과",
+    resolved: "해결됨",
+    remaining: "아직 남음",
+    new: "새로 생김",
+    check: "확인 필요",
+    baseFix: (when: string, n: number) => `기준: ${when} 수정 요청 (${n}개 요청)`,
+    justNow: "방금",
+    basePrev: (when: string) => `기준: 직전 검사와 비교 (${when})`,
+    basePrevHint: "수정 지시문을 복사한 기록이 없어 직전 검사와 비교했습니다. 직전에도 있던 항목은 \"아직 남음\"으로 보입니다. 지시문을 복사하면 그 시점이 기준이 됩니다.",
+    baseClear: "재검사 기준 지우기",
+    resolvedList: (n: number) => `해결된 항목 ${n}개`,
+    revokeAsk: "발급처에서 폐기·재발급했나요?",
+    revokeHint: "비밀키는 코드에서 지워도 이미 노출된 키가 살아 있습니다. 이 체크는 이 컴퓨터에만 기록되며 재검사 판정에는 영향이 없습니다.",
+    requested: (n: number) => `수정 요청한 항목 ${n}개`,
+    requestedLine: (a: number, b: number) => `해결됨 ${a} · 아직 보이는 항목 ${b}`,
+    others: "그 밖의 항목",
+    aiNote: "AI 심층 점검 항목은 재검사 대상이 아닙니다. 그 AI에게 직접 다시 확인시키세요.",
   },
 
   fix: {
@@ -365,6 +387,8 @@ const en: Dict = {
     stopped: "Scan stopped.",
     failed: "The scan failed. Check the terminal for details.",
     offlineNote: "If an external lookup fails, the scan keeps going and skips only that step.",
+    slow: "Waiting for OSV and package registry answers and VulnIntel priority lookups (about 1 second per vulnerability). With many packages this can take a few minutes.",
+    slowSkip: "[Stop] discards this scan. To skip the wait, turn off external lookups in [Settings] and scan again.",
   },
 
   result: {
@@ -481,6 +505,26 @@ const en: Dict = {
     },
     bumped: (from: string, to: string, fixed?: string) =>
       `Upgraded ${from} → ${to}, but it is still vulnerable. ${fixed ? `Upgrade to ${fixed} or later.` : "There is no fixed version yet."}`,
+  },
+
+  recheck: {
+    label: "Recheck result",
+    resolved: "Resolved",
+    remaining: "Still there",
+    new: "New",
+    check: "Needs a look",
+    baseFix: (when: string, n: number) => `Compared with: your fix request (${when}, ${n} requested)`,
+    justNow: "just now",
+    basePrev: (when: string) => `Compared with: the previous scan (${when})`,
+    basePrevHint: "No fix prompt was copied, so this is compared with the previous scan. Items that were there last time show as \"Still there\". Copying a fix prompt makes that moment the baseline.",
+    baseClear: "Clear recheck baseline",
+    resolvedList: (n: number) => `${n} resolved`,
+    revokeAsk: "Revoked and reissued at the provider?",
+    revokeHint: "Removing a key from the code does not disable a key that was already exposed. This tick is kept on this computer only and does not change the recheck result.",
+    requested: (n: number) => `Items in your fix request: ${n}`,
+    requestedLine: (a: number, b: number) => `Resolved ${a} · still showing ${b}`,
+    others: "Everything else",
+    aiNote: "AI deep-check items are not rechecked here. Ask that AI to check them again.",
   },
 
   fix: {

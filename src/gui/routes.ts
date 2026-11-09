@@ -3,8 +3,9 @@
 // here and nowhere in MCP. Responses never contain raw secret values: findings carry the masked
 // GUI form only (§10-3), and value hashes are dropped.
 
-import { basename } from "node:path";
-import { apiKeyOf, CONSENT_VERSION, hasConsent, readConfig, updateConfig, type LocalConfig } from "../appdata.js";
+import { realpath } from "node:fs/promises";
+import { basename, join } from "node:path";
+import { apiKeyOf, CONSENT_VERSION, hasConsent, projectKey, readConfig, readJson, updateConfig, writeJson, type LocalConfig } from "../appdata.js";
 import { BUILTIN_NAMES, KIND_TEXT } from "../builtins/text.js";
 import { registerCves, registeredCves, subscribePackages, trackRows, watchCandidates } from "../commands.js";
 import { readInventory } from "../deps/inventory.js";
@@ -87,6 +88,8 @@ export function createRoutes(ctx: GuiContext): { routes: Record<string, Route>; 
     if (!key) throw fail(400, "no_key");
     return { key, c };
   };
+  // §7-8: "revoked at the issuer?" ticks for resolved secret items — a local note only, never a verdict input.
+  const revokedFile = async (): Promise<string> => join(appDir, "revoked", `${projectKey(await realpath(cwd))}.json`);
   const tplOf = async (id: unknown): Promise<Template> => {
     try {
       return await loadTemplateById(typeof id === "string" ? id : undefined, appDir);
@@ -150,6 +153,16 @@ export function createRoutes(ctx: GuiContext): { routes: Record<string, Route>; 
       if (!hasConsent(c)) return { status: "unchecked" }; // no external request before first-run consent (AC34)
       return { status: await checkKey(defaultHttp(ctx.fetch), new ViBudget(appDir, { keyMode: true }), apiKeyOf(c)!) };
     },
+    async "POST /api/revoked"(b) {
+      const [id] = ids([b.id]);
+      if (!id) throw fail(400, "bad_id");
+      const file = await revokedFile();
+      const set = new Set(await readJson<string[]>(file, []));
+      if (b.done === true) set.add(id);
+      else set.delete(id);
+      await writeJson(file, [...set]);
+      return {};
+    },
     async "POST /api/baseline/clear"() {
       await clearSnapshot(cwd, appDir);
       return {};
@@ -200,6 +213,8 @@ export function createRoutes(ctx: GuiContext): { routes: Record<string, Route>; 
       const hit = new Set(r.findings.map((f) => f.rule_id));
       const name = (id: string): string => ruleName(tpl.rules.find((x) => x.id === id), { rule_id: id }, lang);
       const vi = viNotice(r.vulnintel, lang);
+      const cmp = r.compare;
+      const revoked = cmp?.resolved.some((x) => x.confirm_revocation) ? new Set(await readJson<string[]>(await revokedFile(), [])) : new Set<string>();
       const partial = r.checked.some((c) => c.reason === "timeout_partial") || r.findings.some((f) => f.notes?.includes("priority_pending"));
       return {
         scan_at: r.scan_at,
@@ -212,6 +227,18 @@ export function createRoutes(ctx: GuiContext): { routes: Record<string, Route>; 
         locks: inv.lockfiles.map((l) => ({ path: l.path, packages: l.packages.length })),
         manifests: inv.manifests.length,
         ai_checks: tpl.rules.filter((x) => x.type === "ai_check" && x.enabled).length,
+        // ids, rule ids, titles and locations only — the stored baseline holds no values (§10-3)
+        ...(cmp && {
+          compare: {
+            ...cmp,
+            requested: cmp.requested ?? [],
+            resolved: cmp.resolved.map((x) => ({
+              ...x,
+              title: tpl.rules.some((y) => y.id === x.rule_id) ? name(x.rule_id) : x.title, // stored title is in the scan's language
+              ...(x.confirm_revocation && { revoked: revoked.has(x.id) }),
+            })),
+          },
+        }),
       };
     },
 

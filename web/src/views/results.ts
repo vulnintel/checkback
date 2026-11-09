@@ -1,6 +1,5 @@
-// S3 result (to-do list) and S4 details. The recheck comparison screen (summary of resolved /
-// remaining / new against the fix request) waits for experiment 1c; cards only show the
-// engine's per-item recheck status as it comes.
+// S3 result (to-do list) and S4 details. After a recheck the summary (views/recheck.ts) sits on
+// top, the fix-request items get their own section, and every card shows its status and note.
 
 import { api } from "../api.js";
 import { extLink, h, modal, replace } from "../dom.js";
@@ -8,11 +7,11 @@ import { emptyKind } from "../empty.js";
 import { t } from "../i18n.js";
 import { go, report, S, type GFinding } from "../state.js";
 import { aiCheckDialog, fixDialog, ignoreDialog, pasteToAi, trackFinding, watchDialog } from "./dialogs.js";
+import { loc, recheckSummary, requestedHead, requestedOf } from "./recheck.js";
 import { startScan } from "./start.js";
 
 const MAX_BATCH = 10;
 let updateBar: () => void = () => {};
-const loc = (f: GFinding): string => (f.location ? `${f.location.file}${f.location.line ? `:${f.location.line}` : ""}` : "");
 const cves = (f: GFinding): string[] => (f.vuln_ids ?? []).filter((v) => /^CVE-\d{4}-\d{4,}$/.test(v));
 
 function badges(f: GFinding): HTMLElement {
@@ -67,6 +66,7 @@ function card(f: GFinding, rerender: () => void): HTMLElement {
     f.package ? h("p", { class: "card-pkg" }, c.pkg(f.package, f.version ?? "", f.fixed_version)) : null,
     f.summary && f.summary !== f.title ? h("p", { class: "card-sum" }, f.summary) : null,
     loc(f) ? h("p", { class: "loc" }, loc(f)) : null,
+    f.recheck_note ? h("p", { class: "card-note small" }, recheckText(f)) : null,
     h(
       "div",
       { class: "card-actions" },
@@ -139,10 +139,13 @@ export function resultView(): HTMLElement {
   const tr = t().result;
   const root = h("section", { class: "result" });
   const rerender = (): void => go("result");
-  const fix = r.findings.filter((f) => f.confidence === "confirmed");
-  const review = r.findings.filter((f) => f.confidence === "review");
-  const info = r.findings.filter((f) => f.confidence === "info");
-  const count = (s: string): number => fix.filter((f) => f.severity === s).length;
+  const asked = requestedOf(r.compare, r.findings);
+  const rest = r.findings.filter((f) => !asked.includes(f));
+  const fix = rest.filter((f) => f.confidence === "confirmed");
+  const review = rest.filter((f) => f.confidence === "review");
+  const info = rest.filter((f) => f.confidence === "info");
+  const allFix = r.findings.filter((f) => f.confidence === "confirmed");
+  const count = (s: string): number => allFix.filter((f) => f.severity === s).length;
 
   if (S.st!.key !== "none" && S.tracked === null && r.findings.some((f) => f.rule_id === "vulnerable-deps" && cves(f).length)) {
     S.tracked = new Map();
@@ -155,15 +158,16 @@ export function resultView(): HTMLElement {
   }
 
   root.append(
+    ...[recheckSummary()].filter((x) => x !== null),
     h(
       "div",
       { class: "summary" },
       h(
         "div",
         {},
-        h("h1", { tabindex: "-1" }, tr.fixCount(fix.length)),
+        h("h1", { tabindex: "-1" }, tr.fixCount(allFix.length)),
         h("p", { class: "sev-line" }, (["critical", "high", "medium"] as const).map((s) => h("span", { class: `sev sev-${s}` }, `${tr.sev[s]} ${count(s)}`))),
-        h("p", { class: "muted" }, `${tr.reviewCount(review.length)} · ${tr.infoCount(info.length)}`),
+        h("p", { class: "muted" }, `${tr.reviewCount(r.findings.filter((f) => f.confidence === "review").length)} · ${tr.infoCount(r.findings.filter((f) => f.confidence === "info").length)}`),
         h("p", { class: "muted small" }, tr.meta(new Date(r.scan_at).toLocaleString(S.st!.lang), r.template.name, r.stats.files)),
       ),
       h(
@@ -178,6 +182,10 @@ export function resultView(): HTMLElement {
 
   const empty = emptyState();
   if (empty) root.append(empty);
+  if (r.compare?.baseline === "fix_request" && r.compare.requested.length) {
+    root.append(...requestedHead(asked.length), h("div", { class: "cards" }, asked.map((f) => card(f, rerender))));
+    if (rest.length) root.append(h("h2", { class: "sec others" }, t().recheck.others));
+  }
   if (fix.length) root.append(h("h2", { class: "sec" }, tr.secFix), h("div", { class: "cards" }, fix.map((f) => card(f, rerender))));
   if (review.length) root.append(h("h2", { class: "sec" }, tr.secReview), h("p", { class: "muted small" }, tr.secReviewHint), h("div", { class: "cards" }, review.map((f) => card(f, rerender))));
   if (info.length) root.append(h("details", { class: "fold" }, h("summary", {}, tr.secInfo(info.length)), h("div", { class: "cards" }, info.map((f) => card(f, rerender)))));

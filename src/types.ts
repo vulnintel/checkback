@@ -65,6 +65,8 @@ export interface Finding {
   previous_version?: string;
   /** A baseline finding carried into this result (not found now, but not resolved: lock mismatch / not checked). */
   carried?: boolean;
+  /** Recheck: the baseline finding this one was paired with when the id changed (moved / same key / version bump). */
+  baseline_id?: string;
 }
 
 export type RecheckStatus = "resolved" | "remaining" | "new" | "same_key" | "moved" | "downgraded" | "lock_mismatch" | "not_checked";

@@ -1,3 +1,4 @@
 node_modules/
 dist/
 coverage/
+docker/e2e/.pack/
