@@ -96,6 +96,7 @@ const ko = {
       no_consent: "외부 조회 동의 전",
       external_disabled: "외부 조회 꺼짐",
       offline: "건너뜀 (오프라인)",
+      shallow_clone: "git 이력 일부 생략 (shallow clone)",
     } as Record<string, string>,
   },
 
@@ -429,6 +430,7 @@ const en: Dict = {
       no_consent: "Before external lookup consent",
       external_disabled: "External lookup off",
       offline: "Skipped (offline)",
+      shallow_clone: "Git history partly skipped (shallow clone)",
     },
   },
 

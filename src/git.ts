@@ -48,6 +48,8 @@ const splitZ = (s: string): string[] => s.split("\0").filter(Boolean);
 
 export interface GitInfo {
   isRepo: boolean;
+  /** Shallow clone: history is cut off, so history-only files can be missed. */
+  shallow: boolean;
   /** CWD-relative tracked paths. */
   tracked: Set<string>;
   /** Paths matching `pathspecs` that appear anywhere in history (all refs). */
@@ -62,13 +64,16 @@ export async function gitInfo(cwd: string): Promise<GitInfo> {
   const probe = await git(cwd, ["rev-parse", "--is-inside-work-tree"]);
   const isRepo = probe.code === 0 && probe.out.trim() === "true";
   const tracked = new Set<string>();
+  let shallow = false;
   if (isRepo) {
     const ls = await git(cwd, ["ls-files", "-z"]);
     for (const p of splitZ(ls.out)) tracked.add(p);
+    shallow = (await git(cwd, ["rev-parse", "--is-shallow-repository"])).out.trim() === "true";
   }
   const historyCache = new Map<string, Set<string>>();
   return {
     isRepo,
+    shallow,
     tracked,
     async historyPaths(pathspecs) {
       if (!isRepo || pathspecs.length === 0) return new Set();

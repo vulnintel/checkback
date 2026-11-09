@@ -3,12 +3,13 @@
 import { readFileSync } from "node:fs";
 import { request } from "node:http";
 import { describe, expect, it } from "vitest";
-import { closest, failOnCount, formatScan, parseCli, usage } from "../src/commands.js";
+import { closest, depsUncheckedWarning, failOnCount, formatScan, parseCli, usage } from "../src/commands.js";
 import { startGui } from "../src/gui/server.js";
 import { USER_AGENT, VERSION } from "../src/net/http.js";
 import { createMcpHandler, loadDefaultTemplate } from "../src/index.js";
-import { git, gitRepo, project, scanDefault, tempDir } from "./helpers.js";
+import { consentedAppDir, git, gitRepo, mockNet, project, scanDefault, tempDir } from "./helpers.js";
 
+const NL = "\n";
 const PKG_VERSION = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version as string;
 
 describe("version comes from package.json", () => {
@@ -144,6 +145,56 @@ describe("formatScan", () => {
     expect(out).toContain("고칠 일");
     expect(out).toContain("긴급");
     expect(out).toContain("\x1b[");
+  });
+
+  // N1/N2: what could not be checked is said first; dependency items name the package and the upgrade.
+  const depsProject = (): string => {
+    const lock = JSON.stringify({
+      name: "app",
+      lockfileVersion: 3,
+      packages: { "": { name: "app", dependencies: { lodash: "4.17.15" } }, "node_modules/lodash": { version: "4.17.15", resolved: "https://registry.npmjs.org/lodash/-/lodash-4.17.15.tgz", integrity: "sha512-x" } },
+    });
+    return project({ "package.json": JSON.stringify({ name: "app", dependencies: { lodash: "4.17.15" } }), "package-lock.json": lock, "web/package-lock.json": lock, "web/package.json": JSON.stringify({ name: "web", dependencies: { lodash: "4.17.15" } }) });
+  };
+
+  it("N1: offline dependency lookups are announced at the top, and --fail-on gets a warning", async () => {
+    const r = await scanDefault(depsProject(), { appDir: await consentedAppDir(), fetch: mockNet({ offline: true }).fetch });
+    const out = formatScan(r, await loadDefaultTemplate(), "en", false);
+    const notice = out.indexOf("! An external lookup failed");
+    expect(notice).toBeGreaterThan(0);
+    expect(notice).toBeLessThan(out.indexOf("Next"));
+    expect(out.split(NL)[3]).toMatch(/^! /); // right under the summary
+    expect(depsUncheckedWarning(r)).toMatch(/dependency check did not fully run \(offline.*--fail-on does not cover it/);
+    const ko = formatScan(r, await loadDefaultTemplate(), "ko", false);
+    expect(ko).toContain("! 외부 조회에 실패해 의존성 검사 일부를 하지 못했습니다");
+  });
+
+  it("N1: no consent → consent notice at the top; partial (time budget) → the same notice as GUI/MCP", async () => {
+    let r = await scanDefault(depsProject());
+    expect(formatScan(r, await loadDefaultTemplate(), "en", false).split(NL)[3]).toMatch(/^! External lookups are off until consent/);
+    expect(depsUncheckedWarning(r)).toMatch(/no_consent/);
+    r = await scanDefault(depsProject(), { appDir: await consentedAppDir(), fetch: mockNet({}).fetch, deadlineMs: 0 });
+    expect(formatScan(r, await loadDefaultTemplate(), "en", false)).toContain("! Some external lookups did not finish in time");
+    expect(depsUncheckedWarning(r)).toMatch(/timeout_partial/);
+  });
+
+  it("N2: a vulnerable package shows name, version, upgrade target and every lock with it", async () => {
+    const net = mockNet({
+      osv: { "npm:lodash@4.17.15": ["GHSA-35jh-r3h4-6jhm"] },
+      vulns: { "GHSA-35jh-r3h4-6jhm": { id: "GHSA-35jh-r3h4-6jhm", aliases: [], database_specific: { severity: "HIGH" }, affected: [{ package: { ecosystem: "npm", name: "lodash" }, ranges: [{ events: [{ introduced: "0" }, { fixed: "4.17.21" }] }] }] } },
+      npm: { lodash: {} },
+    });
+    const r = await scanDefault(depsProject(), { appDir: await consentedAppDir({ vulnintel: false }), fetch: net.fetch });
+    const out = formatScan(r, await loadDefaultTemplate(), "en", false);
+    expect(out).toContain(
+      [
+        "  HIGH      Package with known vulnerabilities",
+        "            lodash 4.17.15 → upgrade to 4.17.21 or later",
+        "            package-lock.json +1 more: web/package-lock.json",
+      ].join(NL),
+    );
+    expect(formatScan(r, await loadDefaultTemplate(), "ko", false)).toContain("lodash 4.17.15 → 4.17.21 이상으로 올리기");
+    expect(depsUncheckedWarning(r)).toBeNull();
   });
 
   it("clean project says so", async () => {

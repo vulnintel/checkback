@@ -10,7 +10,7 @@ import { KIND_TEXT } from "./builtins/text.js";
 import { buildSbom } from "./deps/sbom.js";
 import { readInventory } from "./deps/inventory.js";
 import { VERSION, type Fetch } from "./net/http.js";
-import { CONSENT_HOWTO, DATA_TABLE, DISCLAIMER, KEY_NOTICE, osLang, PARTIAL_NOTICE, viNotice } from "./notice.js";
+import { CONSENT_HOWTO, DATA_TABLE, DISCLAIMER, KEY_NOTICE, osLang, scanNotices } from "./notice.js";
 import { aiCheckPromptForProject, dataText, fixPromptsForIds, isSafeVersion, isVulnId, MAX_BATCH, safePkg } from "./prompts.js";
 import { readLastScan, type Compare } from "./recheck.js";
 import { ProjectDirError, scan } from "./scan.js";
@@ -124,12 +124,9 @@ export function createMcpHandler(o: McpOptions): (msg: unknown) => Promise<unkno
       const r = await scan(o.cwd, tpl, {
         appDir, lang: l, deadlineMs: o.deadlineMs ?? MCP_SCAN_DEADLINE_MS, ...(o.fetch && { fetch: o.fetch }), ...(o.now && { now: o.now }),
       });
-      const partial = r.checked.some((c) => c.reason === "timeout_partial") || r.findings.some((f) => f.notes?.includes("priority_pending"));
-      const vi = viNotice(r.vulnintel, l);
       const notice = [
         ...(hasConsent(cfg) ? [] : [DATA_TABLE[l], CONSENT_HOWTO[l]]),
-        ...(vi ? [vi] : []),
-        ...(partial ? [PARTIAL_NOTICE[l]] : []),
+        ...scanNotices(r, l),
         ...(apiKeyOf(cfg) ? [] : [KEY_NOTICE[l]]),
         DISCLAIMER[l],
       ].join("\n\n");

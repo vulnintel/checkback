@@ -196,6 +196,9 @@ await check("cli: scan --text prints a readable report without secrets, masked v
   eq(r.code, 0, `exit code (stderr ${r.err.slice(0, 300)})`);
   assert(/^\d+ things? to fix {3}CRITICAL \d+ · HIGH \d+ · MEDIUM \d+/.test(r.out), `no summary: ${JSON.stringify(r.out.slice(0, 200))}`);
   for (const s of ["To fix", "src/lib/ai.ts:2", "firestore.rules", "npx checkback"]) assert(r.out.includes(s), `missing ${JSON.stringify(s)}`);
+  // N1: what was not checked is said at the top, never a silent "safe"-looking report.
+  const top = MODE === "offline" ? "! An external lookup failed" : "! External lookups are off until consent";
+  assert(r.out.split("\n")[3]?.startsWith(top), `no ${JSON.stringify(top)} notice under the summary: ${JSON.stringify(r.out.slice(0, 400))}`);
   assert(!r.out.includes("\x1b["), "ANSI color codes in non-TTY output");
   noSecrets(r.out, "scan --text");
   const ko = run(["scan", "--text", "--lang", "ko"], { timeoutMs: 90_000 });
@@ -205,6 +208,7 @@ await check("cli: scan --fail-on high exits 1 with a reason on stderr, JSON on s
   const r = run(["scan", "--fail-on", "high"], { timeoutMs: 90_000 });
   eq(r.code, 1, "exit code");
   assert(/things? to fix at high or above \(--fail-on high\)/.test(r.err), `no reason on stderr: ${JSON.stringify(r.err.slice(0, 200))}`);
+  assert(r.err.includes(`dependency check did not fully run (${MODE === "offline" ? "offline" : "no_consent"}`), `no unchecked-dependency warning: ${JSON.stringify(r.err.slice(0, 300))}`);
   expectFindings(JSON.parse(r.out).findings, "scan --fail-on");
   noSecrets(r.out, "scan --fail-on");
 });

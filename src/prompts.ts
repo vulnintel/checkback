@@ -17,6 +17,7 @@ const S = {
   ko: {
     head: "[보안 수정 요청]",
     loc: "위치",
+    sameLines: "같은 내용이 있는 줄(모두 고치세요)",
     whole: "(프로젝트 전체)",
     what: "1) 무엇이 문제인가",
     first: "2) 먼저 할 일",
@@ -38,6 +39,7 @@ const S = {
   en: {
     head: "[Security fix request]",
     loc: "Location",
+    sameLines: "same issue also on lines (fix them all)",
     whole: "(whole project)",
     what: "1) What is wrong",
     first: "2) Do first",
@@ -112,6 +114,12 @@ function vars(f: StoredFinding, tpl: Template, lang: Lang): Record<string, strin
 
 const fill = (text: string, v: Record<string, string>): string => text.replace(/\{([a-z_]+)\}/g, (m, k: string) => v[k] ?? m);
 
+/** Other lines of the same finding in the same file (`related` "file:line"), e.g. "10, 24". */
+function sameLines(f: StoredFinding): string {
+  const pre = f.location ? `${f.location.file}:` : null;
+  return pre ? (f.related ?? []).filter((r) => r.startsWith(pre) && /^\d+$/.test(r.slice(pre.length))).map((r) => r.slice(pre.length)).join(", ") : "";
+}
+
 interface Item {
   head: string;
   body: string[];
@@ -131,7 +139,7 @@ function item(f: StoredFinding, tpl: Template, lang: Lang, external: boolean): I
   return {
     head: `${s.head} ${v.rule_name}`,
     body: [
-      `${s.loc}: ${v.file}${f.location?.line ? `:${v.line}` : ""}`,
+      `${s.loc}: ${v.file}${f.location?.line ? `:${v.line}` : ""}${sameLines(f) ? ` (${s.sameLines}: ${sameLines(f)})` : ""}`,
       `${s.what}: ${clean(desc.split(/(?<=[.!?。])\s/)[0] ?? desc, 300)}`,
       `${s.first}: ${human ?? s.none}`,
       `${s.code}: ${fill(clean(fix, 2000), v)}`,

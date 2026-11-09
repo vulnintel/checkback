@@ -266,8 +266,8 @@ rules:
     expect: absent
     git: tracked
     description:
-      ko: 개인 키나 서비스 계정 키 파일이 git에 추적되고 있습니다.
-      en: A private key or service account key file is tracked by git.
+      ko: 개인 키나 서비스 계정 키 파일이 git에 추적되거나 이력에 남아 있습니다. 파일을 지워도 이력에서 꺼낼 수 있습니다.
+      en: A private key or service account key file is tracked by git or remains in its history. Deleting the file does not remove it from history.
     fix_prompt:
       ko: 먼저 사람이 이 키를 발급처에서 폐기하고 새로 발급합니다(키 교체 — 이력에 남습니다). 그다음 git 추적을 해제하고(git rm --cached {file}) .gitignore에 추가하세요.
       en: First, a person revokes this key at the provider and issues a new one (rotate — it stays in history). Then stop tracking it (git rm --cached {file}) and add it to .gitignore.

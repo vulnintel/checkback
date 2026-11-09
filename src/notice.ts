@@ -1,6 +1,6 @@
 // Fixed user-facing texts shared by the MCP server and the CLI (§3-1, §11).
 
-import type { Lang } from "./types.js";
+import type { Lang, ScanResult } from "./types.js";
 
 export const DATA_TABLE: Record<Lang, string> = {
   ko: [
@@ -60,3 +60,37 @@ export const PARTIAL_NOTICE: Record<Lang, string> = {
   ko: "일부 외부 조회는 시간 안에 끝내지 못해 다음 scan에서 이어서 합니다(결과는 캐시로 이어짐).",
   en: "Some external lookups did not finish in time; the next scan continues them (results are cached).",
 };
+
+export const OFFLINE_NOTICE: Record<Lang, string> = {
+  ko: "외부 조회에 실패해 의존성 검사 일부를 하지 못했습니다(오프라인 또는 서비스 오류). 취약 의존성이 빠졌을 수 있으니 네트워크를 확인하고 다시 scan하세요.",
+  en: "An external lookup failed, so part of the dependency check did not run (offline or service error). Vulnerable dependencies may be missing; check the network and scan again.",
+};
+
+export const SHALLOW_NOTICE: Record<Lang, string> = {
+  ko: "git 이력 검사 일부 생략(shallow clone): 이력에만 남은 .env·키 파일은 보지 못했습니다. 전체 이력으로 검사하려면 `git fetch --unshallow` 후 다시 scan하세요(CI는 fetch-depth: 0).",
+  en: "Git history check partly skipped (shallow clone): .env and key files left only in history were not seen. Run `git fetch --unshallow` and scan again (in CI: fetch-depth: 0).",
+};
+
+/** Folders that hold their own git repository (a `.git` directory) are separate projects and are not scanned. */
+export function nestedRepoNotice(paths: string[], lang: Lang): string | null {
+  if (!paths.length) return null;
+  const shown = paths.slice(0, 3).join(", ") + (paths.length > 3 ? (lang === "ko" ? ` 외 ${paths.length - 3}곳` : ` and ${paths.length - 3} more`) : "");
+  return lang === "ko"
+    ? `하위 폴더의 별도 git 저장소는 검사하지 않았습니다: ${shown}. 그 폴더에서 따로 scan하세요.`
+    : `Separate git repositories in subfolders were not scanned: ${shown}. Scan them from their own folder.`;
+}
+
+/** Notices about what this scan could not fully check — the same lines in the CLI report, the GUI and MCP. */
+export function scanNotices(r: ScanResult, lang: Lang): string[] {
+  const has = (reason: string): boolean => r.checked.some((c) => c.reason === reason);
+  const vi = viNotice(r.vulnintel, lang);
+  const partial = has("timeout_partial") || r.findings.some((f) => f.notes?.includes("priority_pending"));
+  const nested = nestedRepoNotice(r.stats.nested_repos ?? [], lang);
+  return [
+    ...(has("offline") ? [OFFLINE_NOTICE[lang]] : []),
+    ...(partial ? [PARTIAL_NOTICE[lang]] : []),
+    ...(vi ? [vi] : []),
+    ...(has("shallow_clone") ? [SHALLOW_NOTICE[lang]] : []),
+    ...(nested ? [nested] : []),
+  ];
+}

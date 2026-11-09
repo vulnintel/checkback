@@ -83,7 +83,8 @@ export interface CheckedRule {
     | "timeout_partial" // some files timed out
     | "no_consent" // external lookups need first-run consent
     | "external_disabled" // the needed external lookup is turned off
-    | "offline"; // external lookup failed (offline / service error)
+    | "offline" // external lookup failed (offline / service error)
+    | "shallow_clone"; // ran, but git history is cut off (shallow clone) — history-only files may be missed
 }
 
 export interface ScanStats {
@@ -92,6 +93,8 @@ export interface ScanStats {
   allowed_public_keys: number;
   ignored: number;
   timed_out: { rule_id: string; file: string }[];
+  /** Subfolders holding their own git repository (`.git` directory) — separate projects, not scanned. */
+  nested_repos: string[];
 }
 
 export interface ScanResult {

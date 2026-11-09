@@ -15,7 +15,7 @@ import { ViBudget } from "./net/budget.js";
 import { defaultHttp, type Fetch } from "./net/http.js";
 import { createSubscription, listRemediations, putRemediation, type KeyError } from "./net/vulnintel.js";
 import { KIND_TEXT } from "./builtins/text.js";
-import { CONSENT_HOWTO, DISCLAIMER, KEY_NOTICE, viNotice } from "./notice.js";
+import { CONSENT_HOWTO, DISCLAIMER, KEY_NOTICE, scanNotices } from "./notice.js";
 import { readLastScan } from "./recheck.js";
 import type { Finding, Lang, LocalizedText, ScanResult, Severity, Template } from "./types.js";
 
@@ -468,6 +468,20 @@ function describe(f: Finding, tpl: Template, lang: Lang): string {
   return (text.split(/(?<=[.!?])\s+/)[0] ?? "").replace(/\{[a-z_]+\}/g, "…");
 }
 
+/** "next 14.1.0 → upgrade to 15.5.28 or later" — same wording as the GUI card. */
+function pkgLine(f: Finding, ko: boolean): string {
+  const head = `${f.package}${f.version ? ` ${f.version}` : ""}`;
+  if (!f.fixed_version) return head;
+  return ko ? `${head} → ${f.fixed_version} 이상으로 올리기` : `${head} → upgrade to ${f.fixed_version} or later`;
+}
+
+/** Dependency rules that did not fully run: `--fail-on` cannot vouch for them (N1). Null when they all ran. */
+export function depsUncheckedWarning(r: ScanResult): string | null {
+  const why: string[] = [...new Set(r.checked.filter((c) => (c.rule_id === "vulnerable-deps" || c.rule_id === "hallucinated-package") && c.reason && c.reason !== "disabled").map((c) => c.reason!))];
+  if (r.findings.some((f) => f.notes?.includes("priority_pending"))) why.push("priority_pending");
+  return why.length ? `checkback: the dependency check did not fully run (${why.join(", ")}), so --fail-on does not cover it; scan again with network and consent` : null;
+}
+
 /**
  * Readable scan report for a terminal. Prints titles, locations and rule descriptions only —
  * never secret values or masked values (same exposure as the JSON output).
@@ -483,10 +497,14 @@ export function formatScan(r: ScanResult, tpl: Template, lang: Lang, color: bool
   const review = r.findings.filter((f) => f.confidence === "review");
   const info = r.findings.length - fix.length - review.length;
   const item = (f: Finding): string[] => {
-    const where = f.location ? `${f.location.file}${f.location.line ? `:${f.location.line}` : ""}` : "";
+    // Other places of the same finding: every lock with this package version, other lines of the same value.
+    const others = (f.related ?? []).filter((x) => x !== f.location?.file);
+    const more = others.length ? (ko ? ` 외 ${others.length}곳: ` : ` +${others.length} more: `) + others.slice(0, 3).join(", ") + (others.length > 3 ? ", …" : "") : "";
+    const where = f.location ? `${f.location.file}${f.location.line ? `:${f.location.line}` : ""}${more}` : "";
     const desc = describe(f, tpl, lang);
     return [
       `  ${paint(SEV_STYLE[f.severity], names[f.severity])}${" ".repeat(width - cells(names[f.severity]))}  ${paint("bold", f.title)}`,
+      ...(f.package ? [pad + pkgLine(f, ko)] : []),
       ...(where ? [pad + paint("dim", where)] : []),
       ...(desc ? [pad + desc] : []),
     ];
@@ -497,19 +515,19 @@ export function formatScan(r: ScanResult, tpl: Template, lang: Lang, color: bool
     paint("dim", ko ? `확인 필요 ${review.length}개 · 참고 ${info}개 · 검사한 파일 ${r.stats.files}개` : `${review.length} to review · ${info} for information · ${r.stats.files} files checked`),
     "",
   ];
+  // What this scan could not check goes first, so a short report is never read as "safe" (N1).
+  const notices = [...(r.checked.some((c) => c.reason === "no_consent") ? [CONSENT_HOWTO[lang]] : []), ...scanNotices(r, lang)];
+  if (notices.length) out.push(...notices.map((n) => paint(["bold", "yellow"], `! ${n}`)), "");
   if (fix.length) out.push(paint("bold", ko ? "고칠 일" : "To fix"), ...fix.flatMap(item), "");
   if (review.length) out.push(paint("bold", ko ? "확인 필요" : "To review"), ...review.flatMap(item), "");
   if (!fix.length && !review.length) {
     const empty = r.stats.files === 0 ? (ko ? "검사할 파일이 없습니다. 프로젝트 폴더에서 실행하세요." : "No files to check. Run it from your project folder.") : ko ? "이 도구의 규칙에 걸린 항목이 없습니다." : "Nothing matched this tool's rules.";
     out.push(empty, "");
   }
-  const vi = viNotice(r.vulnintel, lang);
   out.push(
     paint("bold", ko ? "다음 할 일" : "Next"),
     ko ? "  npx checkback         화면에서 고칠 항목을 고르고 AI에 붙여 넣을 수정 지시문을 복사하세요" : "  npx checkback         open the results page, pick findings and copy fix prompts for your AI",
     ko ? "  npx checkback scan    AI가 고친 뒤 다시 검사해 남은 것을 확인하세요" : "  npx checkback scan    scan again after the fix to see what is left",
-    ...(r.checked.some((c) => c.reason === "no_consent") ? [paint("dim", `  ${CONSENT_HOWTO[lang]}`)] : []),
-    ...(vi ? [paint("dim", `  ${vi}`)] : []),
     paint("dim", `  ${DISCLAIMER[lang].split("\n")[0]}`),
     "",
   );

@@ -351,47 +351,50 @@ export async function depsBuiltins(ctx: BuiltinCtx, d: DepsInput): Promise<DepsO
 }
 
 /**
- * Priority enrichment (§8-4/§8-5): most severe IDs first across all packages, capped per scan,
- * paced to ~50/min after a short burst (the server's per-IP limit allows a burst of 20). Anything
- * not done by the deadline / budget is marked "priority pending" and continues from cache next scan.
+ * Priority enrichment (§8-4/§8-5): whole packages in priority order (most severe first), so each
+ * scan finishes packages instead of leaving one ID pending in every package (N4). Capped per scan,
+ * paced to one call per VI_INTERVAL_MS (from call start) after a short burst; a full shared bucket
+ * waits for a slot. Anything not done by the deadline is "priority pending" and continues from cache.
  */
 async function enrich(pkgs: VulnPkg[], net: NetCtx, now: number): Promise<void> {
   if (!net.vulnintel) return;
-  const queue = pkgs
-    .flatMap((p) => p.vulns.map((v) => ({ p, v, s: vulnSeverity({ ...v, vi: undefined }) })))
-    .sort((a, b) => sevRank(a.s.sev) - sevRank(b.s.sev) || (b.v.cvss ?? 0) - (a.v.cvss ?? 0));
+  const order = [...pkgs].sort((a, b) => sevRank(baseSeverity(a)) - sevRank(baseSeverity(b)) || topCvss(b) - topCvss(a));
   let calls = 0;
+  let last = 0;
   let stop = false;
-  for (const { p, v } of queue) {
-    if (v.vi) continue; // B1 fields already came with the VulnIntel scan result
-    const id = v.aliases.find((a) => a.startsWith("CVE-")) ?? v.id;
-    const key = `${id}:${net.lang}`;
-    const hit = net.caches.vi.get<ViInfo | null>(key, DAY, now);
-    if (hit !== undefined) {
-      v.vi = hit ?? undefined;
-      continue;
-    }
-    if (stop || calls >= PUBLIC_LOOKUP_CAP || late(net)) {
-      p.pending = true;
-      continue;
-    }
-    if (calls >= VI_BURST) {
-      if (Date.now() + VI_INTERVAL_MS >= net.deadline) {
-        p.pending = true;
+  for (const p of order) {
+    for (const v of p.vulns) {
+      if (v.vi) continue; // B1 fields already came with the VulnIntel scan result
+      const id = v.aliases.find((a) => a.startsWith("CVE-")) ?? v.id;
+      // KEV/VPI/EPSS/CVSS do not depend on the language: one entry per ID (switching ko/en must not re-ask).
+      const hit = net.caches.vi.get<ViInfo | null>(id, DAY, now);
+      if (hit !== undefined) {
+        v.vi = hit ?? undefined;
         continue;
       }
-      await net.http.sleep(VI_INTERVAL_MS);
-    }
-    calls++;
-    const r = await publicLookup(net.http, net.budget, id, net.lang);
-    if (r.ok) {
-      v.vi = { kev: r.value.is_kev, vpi: r.value.vpi_level, epss: r.value.epss, cvss: r.value.cvss };
-      net.caches.vi.set(key, v.vi, now);
-    } else if (r.reason === "not_found") net.caches.vi.set(key, null, now);
-    else if (r.reason === "budget" || late(net)) p.pending = true;
-    else {
-      p.failed = true;
-      if (r.reason === "rate_limited" || r.reason === "offline") stop = true;
+      let r: Awaited<ReturnType<typeof publicLookup>> | undefined;
+      while (!stop && calls < PUBLIC_LOOKUP_CAP) {
+        const wait = calls >= VI_BURST || r ? Math.max(0, last + VI_INTERVAL_MS - Date.now()) : 0;
+        if (Date.now() + wait >= net.deadline) break;
+        if (wait) await net.http.sleep(wait);
+        last = Date.now();
+        r = await publicLookup(net.http, net.budget, id, net.lang);
+        if (r.ok || r.reason !== "budget") break; // budget: the shared per-minute bucket is full — wait for a slot
+      }
+      if (!r || (!r.ok && (r.reason === "budget" || late(net)))) {
+        p.pending = true; // out of time, calls or (after a 429/offline) allowed calls: the rest waits for the next scan
+        stop = true;
+        continue;
+      }
+      calls++;
+      if (r.ok) {
+        v.vi = { kev: r.value.is_kev, vpi: r.value.vpi_level, epss: r.value.epss, cvss: r.value.cvss };
+        net.caches.vi.set(id, v.vi, now);
+      } else if (r.reason === "not_found") net.caches.vi.set(id, null, now);
+      else {
+        p.failed = true;
+        if (r.reason === "rate_limited" || r.reason === "offline") stop = true;
+      }
     }
   }
 }
@@ -557,10 +560,19 @@ function vulnSeverity(v: Detail): { sev: Severity; known: boolean } {
   return { sev: "medium", known: !!v.osvSeverity || cv !== undefined };
 }
 
+/** Severity from OSV data only (§7-3 "no vpi_level" branch): deterministic before enrichment. */
+const baseSeverity = (p: VulnPkg): Severity => p.vulns.map((v) => vulnSeverity({ ...v, vi: undefined, kev: undefined }).sev).sort((a, b) => sevRank(a) - sevRank(b))[0] ?? "medium";
+const topCvss = (p: VulnPkg): number => Math.max(0, ...p.vulns.map((v) => v.cvss ?? 0));
+
 function vulnFinding(p: VulnPkg): BF {
   const { t } = p;
   const notes: NoteCode[] = [];
-  const sevs = p.vulns.map(vulnSeverity);
+  // N4: the §7-3 VPI mapping applies once every ID of the package has its priority. Until then the
+  // card keeps the OSV/CVSS severity (only KEV, which makes the final result critical anyway, shows
+  // early), so repeated scans do not reshuffle severities while enrichment is still running.
+  const done = !p.pending && !p.failed;
+  const kev = p.vulns.some((v) => v.vi?.kev || v.kev);
+  const sevs = p.vulns.map((v) => (done ? vulnSeverity(v) : vulnSeverity({ ...v, vi: undefined, kev: v.kev || v.vi?.kev || undefined })));
   const severity = sevs.map((s) => s.sev).sort((a, b) => sevRank(a) - sevRank(b))[0] ?? "medium";
   if (!sevs.length || sevs.every((s) => !s.known)) notes.push("severity_unknown");
   if (t.dev) notes.push("dev_dependency");
@@ -575,9 +587,9 @@ function vulnFinding(p: VulnPkg): BF {
     const n = xs.filter((x): x is number => typeof x === "number");
     return n.length ? Math.max(...n) : undefined;
   };
-  const vpi = max(p.vulns.map((v) => v.vi?.vpi));
-  const epss = max(p.vulns.map((v) => v.vi?.epss));
-  const cvss = max(p.vulns.map((v) => v.cvss ?? v.vi?.cvss));
+  const vpi = done ? max(p.vulns.map((v) => v.vi?.vpi)) : undefined;
+  const epss = done ? max(p.vulns.map((v) => v.vi?.epss)) : undefined;
+  const cvss = max(p.vulns.map((v) => v.cvss ?? (done ? v.vi?.cvss : undefined)));
   return {
     rule: "vulnerable-deps",
     kind: fix ? "vulnerable" : "vulnerable_no_fix",
@@ -591,7 +603,7 @@ function vulnFinding(p: VulnPkg): BF {
       ...pkgFields(t),
       ...(fix && { fixed_version: fix }),
       vuln_ids: ids,
-      kev: p.vulns.some((v) => v.vi?.kev || v.kev),
+      kev,
       ...(vpi !== undefined && { vpi_level: vpi }),
       ...(epss !== undefined && { epss }),
       ...(cvss !== undefined && { cvss }),
