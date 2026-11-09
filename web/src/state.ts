@@ -51,6 +51,7 @@ export interface GFinding {
   lockfile?: string;
   recheck?: string;
   recheck_note?: string;
+  previous_version?: string;
   carried?: boolean;
   name: string;
   summary: string;

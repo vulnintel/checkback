@@ -26,7 +26,7 @@ export const MCP_SCAN_DEADLINE_MS = 20_000;
 const MCP_FIELDS = [
   "id", "rule_id", "kind", "severity", "confidence", "title", "location", "secret_kind", "source", "notes", "related",
   "ecosystem", "package", "version", "fixed_version", "vuln_ids", "kev", "vpi_level", "epss", "cvss", "lockfile",
-  "recheck", "recheck_note", "carried",
+  "recheck", "recheck_note", "previous_version", "carried",
 ] as const;
 export type McpFinding = Pick<Finding, (typeof MCP_FIELDS)[number]>;
 

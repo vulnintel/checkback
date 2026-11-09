@@ -82,6 +82,12 @@ function dl(rows: [string, Node | string | null | undefined][]): HTMLElement {
   return h("dl", { class: "kv" }, rows.filter(([, v]) => v !== null && v !== undefined && v !== "").flatMap(([k, v]) => [h("dt", {}, k), h("dd", {}, v)]));
 }
 
+function recheckText(f: GFinding): string {
+  const d = t().detail;
+  if (f.recheck_note === "version_bumped_still_vulnerable" && f.previous_version) return d.bumped(f.previous_version, f.version ?? "", f.fixed_version);
+  return d.recheckNote[f.recheck_note ?? ""] ?? f.recheck_note ?? "";
+}
+
 /** S4 */
 export function detailDialog(f: GFinding): void {
   const d = t().detail;
@@ -93,7 +99,7 @@ export function detailDialog(f: GFinding): void {
       badges(f),
       h("h3", {}, d.why),
       h("p", {}, f.description || f.summary),
-      f.recheck_note ? h("p", { class: "note" }, h("strong", {}, `${d.recheckWhy}: `), d.recheckNote[f.recheck_note] ?? f.recheck_note) : null,
+      f.recheck_note ? h("p", { class: "note" }, h("strong", {}, `${d.recheckWhy}: `), recheckText(f)) : null,
       dl([
         [d.where, loc(f) || null],
         [d.related, f.related?.length ? f.related.join(", ") : null],

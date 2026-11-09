@@ -167,7 +167,10 @@ const ko = {
       moved_elsewhere: "같은 내용이 다른 위치로 옮겨진 것으로 보입니다.",
       moved_to_lower_confidence: "검사를 피하는 위치로 옮겨졌을 수 있습니다.",
       static_unverifiable: "값이 변수·환경변수로 정해져 고쳐졌는지 검사로 판단할 수 없습니다. 실제 값을 직접 확인하세요.",
+      lock_not_regenerated: "manifest는 바뀌었지만 lock 파일이 그대로입니다. 패키지 매니저로 다시 설치해 lock을 만드세요.",
     } as Record<string, string>,
+    bumped: (from: string, to: string, fixed?: string) =>
+      `${from} → ${to}로 올렸지만 아직 취약합니다. ${fixed ? `${fixed} 이상으로 올리세요.` : "아직 수정 버전이 없습니다."}`,
   },
 
   fix: {
@@ -474,7 +477,10 @@ const en: Dict = {
       moved_elsewhere: "The same content seems to have moved to another place.",
       moved_to_lower_confidence: "It may have moved to a place the check looks at less strictly.",
       static_unverifiable: "The value comes from a variable or the environment, so the check cannot tell whether it was fixed. Confirm the actual value directly.",
+      lock_not_regenerated: "The manifest changed but the lock file did not. Reinstall with your package manager to regenerate the lock.",
     },
+    bumped: (from: string, to: string, fixed?: string) =>
+      `Upgraded ${from} → ${to}, but it is still vulnerable. ${fixed ? `Upgrade to ${fixed} or later.` : "There is no fixed version yet."}`,
   },
 
   fix: {

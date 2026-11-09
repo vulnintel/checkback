@@ -11,7 +11,7 @@ import { readText, type FileEntry } from "./files.js";
 import type { CheckedRule, Confidence, Finding, RecheckStatus } from "./types.js";
 import { satisfies } from "./versions.js";
 
-export type StoredFinding = Omit<Finding, "masked_match" | "recheck" | "recheck_note" | "carried">;
+export type StoredFinding = Omit<Finding, "masked_match" | "recheck" | "recheck_note" | "carried" | "previous_version">;
 
 export interface LockState {
   path: string;
@@ -61,7 +61,7 @@ export const lastScanFile = (appDir: string, cwd: string): Promise<string> => fi
 export const snapshotFile = (appDir: string, cwd: string): Promise<string> => file(appDir, cwd, "fix-baseline");
 
 export function storedFinding(f: Finding): StoredFinding {
-  const { masked_match: _m, recheck: _r, recheck_note: _n, carried: _c, ...rest } = f;
+  const { masked_match: _m, recheck: _r, recheck_note: _n, carried: _c, previous_version: _p, ...rest } = f;
   return rest;
 }
 
@@ -209,12 +209,27 @@ export function compareWith(
   };
   // A value set by a variable/env (env_driven) cannot be judged fixed statically (1c E3).
   const unverifiable = (f: Finding): string | undefined => (f.notes?.includes("env_driven") ? "static_unverifiable" : undefined);
+  // Q4: a dependency item still there while its manifest changed and its lock did not → "reinstall" note.
+  const lockNotRegenerated = (f: Finding): string | undefined => {
+    if (!DEP_RULES.has(f.rule_id)) return undefined;
+    const p = f.lockfile ?? f.location?.file ?? "";
+    const [bl, cl] = [baseLock.get(p), curLock.get(p)];
+    return bl && cl && bl.lockHash === cl.lockHash && bl.manifestHash !== cl.manifestHash ? "lock_not_regenerated" : undefined;
+  };
+  // Q3: a new vulnerable item of the same ecosystem + package at another version, same lock preferred.
+  const bumpedTo = (b: StoredFinding): Finding | undefined => {
+    if (b.rule_id !== "vulnerable-deps" || !b.package || !b.version) return undefined;
+    const pool = cur.filter(
+      (f) => f.rule_id === b.rule_id && f.ecosystem === b.ecosystem && f.package === b.package && !!f.version && f.version !== b.version && !used.has(f.id) && !baseIds.has(f.id),
+    );
+    return pool.find((f) => f.lockfile === b.lockfile) ?? pool[0];
+  };
 
   for (const b of baseFindings) {
     const same = byId.get(b.id);
     if (same) {
       // §7-8 "check (lock)" applies only to dependency items that disappeared; same fingerprint = "remaining".
-      mark(same, "remaining", unverifiable(same));
+      mark(same, "remaining", unverifiable(same) ?? lockNotRegenerated(same));
       continue;
     }
     if (!ranFully(b.rule_id)) {
@@ -242,6 +257,12 @@ export function compareWith(
     }
     if (handEdited(b)) {
       carry(b, "lock_mismatch", "lock_hand_edited");
+      continue;
+    }
+    const bumped = bumpedTo(b);
+    if (bumped) {
+      bumped.previous_version = b.version!;
+      mark(bumped, "remaining", "version_bumped_still_vulnerable");
       continue;
     }
     counts.resolved++;

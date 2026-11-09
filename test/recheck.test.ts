@@ -192,6 +192,113 @@ describe("AC67 recheck against the fix-request snapshot", () => {
     expect(byRule(r, "cors-credentials-any")).toMatchObject([{ recheck: "remaining", recheck_note: "static_unverifiable" }]);
   });
 
+  describe("1c Q3/Q4 dependency items", () => {
+    const range = (eco: string, name: string, id: string, events: object[]): object => ({ id, affected: [{ package: { ecosystem: eco, name }, ranges: [{ type: "ECOSYSTEM", events }] }] });
+    const ent = (n: string, v: string, i: string): object => ({ version: v, resolved: `https://registry.npmjs.org/${n}/-/${n}-${v}.tgz`, integrity: i });
+    const lockText = (deps: Record<string, string>, pk: Record<string, object>): string => JSON.stringify({ name: "a", lockfileVersion: 3, packages: { "": { name: "a", dependencies: deps }, ...pk } });
+    const manifest = (deps: Record<string, string>): string => JSON.stringify({ name: "a", dependencies: deps });
+    const deps = (r: ScanResult): [string | undefined, string | null | undefined, string | undefined, string | undefined][] =>
+      byRule(r, "vulnerable-deps")
+        .map((f): [string | undefined, string | null | undefined, string | undefined, string | undefined] => [f.recheck, f.version, f.recheck_note, f.previous_version])
+        .sort((a, b) => String(a[1]).localeCompare(String(b[1])));
+
+    it("Q3: same package re-pinned at a still-vulnerable version → one 'remaining' card (A → B, upgrade to C); safe version or removed package → resolved", async () => {
+      // 1c C case: langchain-core 0.3.34 → 1.2.22, still inside [1.0.0, 1.3.3).
+      const v = range("PyPI", "langchain-core", "GHSA-lc-0001", [{ introduced: "0" }, { fixed: "0.3.84" }, { introduced: "1.0.0" }, { fixed: "1.3.3" }]);
+      const net = mockNet({ osv: { "PyPI:langchain-core@0.3.34": ["GHSA-lc-0001"], "PyPI:langchain-core@1.2.22": ["GHSA-lc-0001"] }, vulns: { "GHSA-lc-0001": v } });
+      const appDir = await consentedAppDir({ vulnintel: false, registry: false });
+      const dir = project({ "requirements.txt": "langchain-core==0.3.34\n" });
+      await baseline(dir, appDir, net.fetch);
+      project({ "requirements.txt": "langchain-core==1.2.22\n" }, dir);
+      let r = await rescan(dir, appDir, { fetch: net.fetch });
+      expect(byRule(r, "vulnerable-deps")).toMatchObject([
+        { recheck: "remaining", recheck_note: "version_bumped_still_vulnerable", package: "langchain-core", previous_version: "0.3.34", version: "1.2.22", fixed_version: "1.3.3" },
+      ]);
+      expect(r.compare!.counts).toMatchObject({ remaining: 1, resolved: 0, new: 0 });
+      expect(r.compare!.resolved).toEqual([]);
+      // The new version is not vulnerable → resolved.
+      project({ "requirements.txt": "langchain-core==1.3.3\n" }, dir);
+      r = await rescan(dir, appDir, { fetch: net.fetch });
+      expect(r.compare!.counts).toMatchObject({ resolved: 1, remaining: 0, new: 0 });
+      // The package is gone → resolved.
+      project({ "requirements.txt": "requests==2.31.0\n" }, dir);
+      r = await rescan(dir, appDir, { fetch: net.fetch });
+      expect(r.compare!.counts).toMatchObject({ resolved: 1, remaining: 0, new: 0 });
+      // Another vulnerable package showing up is "new", not paired.
+      const other = range("PyPI", "langchain", "GHSA-lc-0002", [{ introduced: "0" }, { fixed: "0.2.0" }]);
+      const net2 = mockNet({ osv: { "PyPI:langchain@0.1.0": ["GHSA-lc-0002"] }, vulns: { "GHSA-lc-0002": other } });
+      project({ "requirements.txt": "langchain==0.1.0\n" }, dir);
+      r = await rescan(dir, appDir, { fetch: net2.fetch });
+      expect(r.compare!.counts).toMatchObject({ resolved: 1, remaining: 0, new: 1 });
+    });
+
+    it("Q3: several versions of one package in a lock — only a version that disappeared pairs, and only with a version not in the baseline", async () => {
+      const ids = ["GHSA-lo-0001"];
+      const net = mockNet({
+        osv: { "npm:lodash@4.17.19": ids, "npm:lodash@4.17.20": ids, "npm:lodash@4.17.21": ids },
+        vulns: { "GHSA-lo-0001": range("npm", "lodash", "GHSA-lo-0001", [{ introduced: "0" }, { fixed: "4.17.30" }]) },
+      });
+      const appDir = await consentedAppDir({ vulnintel: false, registry: false });
+      const nested = { "node_modules/x": ent("x", "1.0.0", "sha512-X0"), "node_modules/x/node_modules/lodash": ent("lodash", "4.17.19", "sha512-L19") };
+      const dir = project({
+        "package.json": manifest({ lodash: "^4.17.20", x: "^1.0.0" }),
+        "package-lock.json": lockText({ lodash: "^4.17.20", x: "^1.0.0" }, { "node_modules/lodash": ent("lodash", "4.17.20", "sha512-L20"), ...nested }),
+      });
+      await baseline(dir, appDir, net.fetch);
+      // Root lodash reinstalled at 4.17.21 (still vulnerable); x's nested 4.17.19 untouched.
+      project(
+        {
+          "package.json": manifest({ lodash: "^4.17.21", x: "^1.0.0" }),
+          "package-lock.json": lockText({ lodash: "^4.17.21", x: "^1.0.0" }, { "node_modules/lodash": ent("lodash", "4.17.21", "sha512-L21"), ...nested }),
+        },
+        dir,
+      );
+      let r = await rescan(dir, appDir, { fetch: net.fetch });
+      expect(deps(r)).toEqual([
+        ["remaining", "4.17.19", undefined, undefined],
+        ["remaining", "4.17.21", "version_bumped_still_vulnerable", "4.17.20"],
+      ]);
+      expect(r.compare!.counts).toMatchObject({ remaining: 2, resolved: 0, new: 0, lock_mismatch: 0 });
+      // x upgraded so the nested 4.17.19 is gone; root 4.17.20 unchanged → 4.17.19 resolved, not paired with 4.17.20.
+      project(
+        {
+          "package.json": manifest({ lodash: "^4.17.20", x: "^1.0.0" }),
+          "package-lock.json": lockText({ lodash: "^4.17.20", x: "^1.0.0" }, { "node_modules/lodash": ent("lodash", "4.17.20", "sha512-L20"), "node_modules/x": ent("x", "1.0.1", "sha512-X1") }),
+        },
+        dir,
+      );
+      r = await rescan(dir, appDir, { fetch: net.fetch });
+      expect(deps(r)).toEqual([["remaining", "4.17.20", undefined, undefined]]);
+      expect(r.compare!.counts).toMatchObject({ remaining: 1, resolved: 1, new: 0 });
+    });
+
+    it("Q4: manifest changed but lock untouched → 'remaining' + reinstall note; both changed or both untouched → no note; never 'lock hand-edited'", async () => {
+      const net = mockNet({ osv: { "npm:lodash@4.17.20": ["GHSA-lo-0001"] }, vulns: { "GHSA-lo-0001": range("npm", "lodash", "GHSA-lo-0001", [{ introduced: "0" }, { fixed: "4.17.21" }]) } });
+      const appDir = await consentedAppDir({ vulnintel: false, registry: false });
+      const lodash = { "node_modules/lodash": ent("lodash", "4.17.20", "sha512-L20") };
+      const dir = project({ "package.json": manifest({ lodash: "^4.17.20" }), "package-lock.json": lockText({ lodash: "^4.17.20" }, lodash) });
+      await baseline(dir, appDir, net.fetch);
+      // Both untouched.
+      let r = await rescan(dir, appDir, { fetch: net.fetch });
+      expect(deps(r)).toEqual([["remaining", "4.17.20", undefined, undefined]]);
+      // Manifest only: the AI bumped package.json and did not reinstall.
+      project({ "package.json": manifest({ lodash: "^4.17.21" }) }, dir);
+      r = await rescan(dir, appDir, { fetch: net.fetch });
+      expect(deps(r)).toEqual([["remaining", "4.17.20", "lock_not_regenerated", undefined]]);
+      expect(r.compare!.counts).toMatchObject({ remaining: 1, lock_mismatch: 0, resolved: 0 });
+      // Both changed (another package installed properly), lodash still at the vulnerable version.
+      project(
+        {
+          "package.json": manifest({ lodash: "^4.17.20", ms: "^2.1.3" }),
+          "package-lock.json": lockText({ lodash: "^4.17.20", ms: "^2.1.3" }, { ...lodash, "node_modules/ms": ent("ms", "2.1.3", "sha512-M") }),
+        },
+        dir,
+      );
+      r = await rescan(dir, appDir, { fetch: net.fetch });
+      expect(deps(r)).toEqual([["remaining", "4.17.20", undefined, undefined]]);
+    });
+  });
+
   it("(l)(m) lock consistency rules", () => {
     const st = (p: Partial<LockState>): LockState => ({ path: "package-lock.json", lockHash: "1", manifestHash: "m", manifestDeps: null, root: null, entries: {}, ...p });
     const base = st({ entries: { a: [{ version: "1.0.0", integrity: "sha512-A" }] } });

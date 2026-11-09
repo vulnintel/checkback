@@ -61,6 +61,8 @@ export interface Finding {
   /** Recheck status vs the baseline (§7-8). */
   recheck?: RecheckStatus;
   recheck_note?: string;
+  /** Recheck Q3: the baseline version of a package re-locked at a version that is still vulnerable. */
+  previous_version?: string;
   /** A baseline finding carried into this result (not found now, but not resolved: lock mismatch / not checked). */
   carried?: boolean;
 }
