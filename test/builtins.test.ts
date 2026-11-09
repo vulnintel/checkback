@@ -358,12 +358,69 @@ describe("vulnerable-deps (§7-3)", () => {
     expect(kinds(byRule(r, "vulnerable-deps"))).toEqual([["unsupported_lock", "medium", "info"]]);
   });
 
-  it("unsupported lock → info 'next release' + manifest version unknown", async () => {
-    const r = await scanDefault(project({ "package.json": pj({ name: "a", dependencies: { x: "1" } }), "yarn.lock": "" }));
-    expect(kinds(byRule(r, "vulnerable-deps"))).toEqual([
-      ["version_unknown", "medium", "review"],
-      ["unsupported_lock", "medium", "info"],
+  it("B8: only an unsupported lock → one 'not supported yet' review item, never 'no lock file'; per ecosystem; unpinned requirements → 'not pinned'", async () => {
+    const at = (r: Awaited<ReturnType<typeof scanDefault>>): (string | undefined)[][] => byRule(r, "vulnerable-deps").map((f) => [f.kind, f.confidence, f.location?.file]).sort();
+    let r = await scanDefault(project({ "package.json": pj({ name: "a", dependencies: { x: "1" } }), "yarn.lock": "" }));
+    expect(at(r)).toEqual([["unsupported_lock", "review", "yarn.lock"]]);
+    // A root uv.lock (workspace) covers member pyprojects, not a package.json.
+    r = await scanDefault(
+      project({
+        "uv.lock": "version = 1\n",
+        "pyproject.toml": '[project]\nname = "app"\ndependencies = ["fastapi"]\n',
+        "server/pyproject.toml": '[project]\nname = "srv"\ndependencies = ["uvicorn"]\n',
+        "web/package.json": pj({ name: "w", dependencies: { x: "1" } }),
+      }),
+    );
+    expect(at(r)).toEqual([
+      ["unsupported_lock", "review", "uv.lock"],
+      ["version_unknown", "review", "web/package.json"],
     ]);
+    r = await scanDefault(project({ "requirements.txt": "PyYAML>=5.1\nflask==2.0.0\n" }));
+    expect(at(r)).toEqual([["version_unpinned", "review", "requirements.txt"]]);
+  });
+
+  it("B3: a broken or old lock → 'lock could not be read' review item instead of a silent 'nothing found'", async () => {
+    const at = (r: Awaited<ReturnType<typeof scanDefault>>): (string | undefined)[][] => byRule(r, "vulnerable-deps").map((f) => [f.kind, f.confidence, f.location?.file]);
+    const manifest = pj({ name: "a", dependencies: { lodash: "4.17.15" } });
+    expect(at(await scanDefault(project({ "package.json": manifest, "package-lock.json": lock({ lodash: "4.17.15" }).slice(0, 40) })))).toEqual([["lock_unreadable", "review", "package-lock.json"]]);
+    const conflict = "lockfileVersion: '9.0'\nimporters:\n  .:\n<<<<<<< HEAD\n    dependencies: {}\n=======\n    dependencies: []\n>>>>>>> feature\n";
+    expect(at(await scanDefault(project({ "package.json": manifest, "pnpm-lock.yaml": conflict })))).toEqual([["lock_unreadable", "review", "pnpm-lock.yaml"]]);
+    const old = "lockfileVersion: 5.4\npackages:\n  /lodash/4.17.15:\n    resolution: {integrity: sha512-x}\n";
+    expect(at(await scanDefault(project({ "package.json": manifest, "pnpm-lock.yaml": old })))).toEqual([["lock_regenerate", "review", "pnpm-lock.yaml"]]);
+  });
+
+  it("B1: the suggested fixed version is itself asked to OSV; a vulnerable candidate brings the next fix; unasked → fix_unverified", async () => {
+    const lo = (id: string, events: object[]): object => ({ id, affected: [{ package: { ecosystem: "npm", name: "lodash" }, ranges: [{ type: "ECOSYSTEM", events }] }] });
+    // 4.18.0 fixes what 4.17.15 has, but 4.18.0 itself is hit by a later vuln fixed in 4.18.1 (the QA lodash case).
+    const m = {
+      osv: { "npm:lodash@4.17.15": ["GHSA-lo-1"], "npm:lodash@4.18.0": ["GHSA-lo-2"] },
+      vulns: { "GHSA-lo-1": lo("GHSA-lo-1", [{ introduced: "0" }, { fixed: "4.18.0" }]), "GHSA-lo-2": lo("GHSA-lo-2", [{ introduced: "4.18.0" }, { fixed: "4.18.1" }]) },
+      npm: { lodash: {} },
+    };
+    const dir = (): string => project({ "package.json": pj({ name: "a", dependencies: { lodash: "4.17.15" } }), "package-lock.json": lock({ lodash: "4.17.15" }) });
+    let f = byRule(await scanDefault(dir(), { appDir: await consentedAppDir({ vulnintel: false }), fetch: mockNet(m).fetch, now }), "vulnerable-deps");
+    expect(f).toMatchObject([{ kind: "vulnerable", fixed_version: "4.18.1", vuln_ids: ["GHSA-lo-1"] }]);
+    expect(f[0]!.notes).not.toContain("fix_unverified");
+    // OSV fails for the candidate check → the range-based pick, marked unverified.
+    let batches = 0;
+    const down = mockNet({ ...m, custom: (u) => (u.pathname === "/v1/querybatch" && ++batches > 1 ? new Response("{}", { status: 503 }) : undefined) });
+    f = byRule(await scanDefault(dir(), { appDir: await consentedAppDir({ vulnintel: false }), fetch: down.fetch, now }), "vulnerable-deps");
+    expect(f).toMatchObject([{ kind: "vulnerable", fixed_version: "4.18.0" }]);
+    expect(f[0]!.notes).toContain("fix_unverified");
+  });
+
+  it("B15: requests still running at the deadline are cut there; the result is partial, not offline", async () => {
+    const hang = ((_u: unknown, init?: RequestInit) => new Promise((_, rej) => init!.signal!.addEventListener("abort", () => rej(init!.signal!.reason)))) as typeof fetch;
+    const t0 = Date.now();
+    const r = await scanDefault(project({ "package.json": pj({ name: "a", dependencies: { lodash: "4.17.20" } }), "package-lock.json": lock({ lodash: "4.17.20" }) }), {
+      appDir: await consentedAppDir({ vulnintel: false }),
+      fetch: hang,
+      now,
+      deadlineMs: 1500,
+    });
+    expect(Date.now() - t0).toBeLessThan(1500 + 3000); // not requestJson's 30 s timeout
+    expect(r.checked.find((c) => c.rule_id === "vulnerable-deps")).toMatchObject({ ran: false, reason: "timeout_partial" });
+    expect(r.checked.find((c) => c.rule_id === "hallucinated-package")).toMatchObject({ ran: false, reason: "timeout_partial" });
   });
 });
 

@@ -177,9 +177,33 @@ export const KIND_TEXT: Record<string, KindText> = {
       en: `Install with your package manager to create a lock file and commit it (pin Python versions with ==). Do not edit the lock file by hand.`,
     },
   },
+  "vulnerable-deps/version_unpinned": {
+    title: { ko: "버전이 고정되지 않음", en: "Versions not pinned" },
+    description: { ko: "requirements 파일에 == 로 고정되지 않은 패키지가 있어 설치되는 버전을 알 수 없고, 그 패키지의 취약점을 판정하지 못했습니다.", en: "Some packages in this requirements file are not pinned with ==, so their installed versions are unknown and their vulnerabilities could not be checked." },
+    fix: {
+      ko: "{file}의 패키지 버전을 지금 쓰는 버전으로 == 고정하세요. 버전을 새로 고르거나 패키지를 추가하지 마세요.",
+      en: "Pin the packages in {file} with == to the versions in use now. Do not pick new versions or add packages.",
+    },
+  },
+  "vulnerable-deps/lock_unreadable": {
+    title: { ko: "lock 파일을 읽지 못함 — 의존성 검사 안 됨", en: "Lock file could not be read — dependencies not checked" },
+    description: { ko: "lock 파일이 깨졌거나(JSON·YAML 오류, 머지 충돌 표식) 지원하지 않는 형식 버전이라 설치 버전을 확인하지 못했고, 취약점을 판정하지 못했습니다.", en: "The lock file is broken (JSON/YAML error, merge conflict markers) or uses an unsupported format version, so installed versions and vulnerabilities could not be checked." },
+    fix: {
+      ko: "{file}에 머지 충돌 표식이 남아 있으면 정리한 뒤, 패키지 매니저로 다시 설치해 lock 파일을 새로 만드세요. lock 파일을 손으로 고치지 마세요.",
+      en: "If {file} still has merge conflict markers, resolve them; then reinstall with your package manager so it writes a fresh lock file. Do not edit the lock file by hand.",
+    },
+  },
+  "vulnerable-deps/lock_regenerate": {
+    title: { ko: "오래된 lock 형식 — 의존성 검사 안 됨", en: "Old lock format — dependencies not checked" },
+    description: { ko: "pnpm 7 이하가 만든 lock 형식(lockfileVersion 5.x 이하)은 읽지 못해 설치 버전과 취약점을 확인하지 못했습니다.", en: "Lock files written by pnpm 7 or earlier (lockfileVersion 5.x or older) cannot be read, so installed versions and vulnerabilities were not checked." },
+    fix: {
+      ko: "pnpm 8 이상으로 다시 설치해 {file}을 새로 만드세요. lock 파일을 손으로 고치지 마세요.",
+      en: "Reinstall with pnpm 8 or later so it rewrites {file}. Do not edit the lock file by hand.",
+    },
+  },
   "vulnerable-deps/unsupported_lock": {
-    title: { ko: "다음 릴리스에서 지원하는 lock 형식", en: "Lock format supported in the next release" },
-    description: { ko: "이 lock 형식은 아직 읽지 못해 버전을 확인하지 못했습니다.", en: "This lock format cannot be read yet, so versions were not checked." },
+    title: { ko: "아직 지원하지 않는 lock 형식 — 버전 확인 안 됨", en: "Lock format not supported yet — versions not checked" },
+    description: { ko: "이 lock 형식은 아직 읽지 못해 설치 버전과 취약점을 확인하지 못했습니다. 다음 릴리스에서 지원합니다.", en: "This lock format cannot be read yet, so installed versions and vulnerabilities were not checked. Support is planned for the next release." },
     fix: { ko: "다음 릴리스를 기다리거나 지원 형식(npm·pnpm·requirements)으로 다시 검사하세요.", en: "Wait for the next release or check with a supported format (npm, pnpm, requirements)." },
   },
 };
