@@ -36,7 +36,7 @@ if (parsed.kind === "help") {
     );
     if (!opts["--no-open"]) openBrowser(g.url);
   } else if (cmd === "mcp") {
-    // Plugin MCP servers start in the plugin folder; Claude Code passes the project root here.
+    // Claude Code sets CLAUDE_PROJECT_DIR for MCP servers; other clients start us in the project folder.
     await runStdioServer({ cwd: process.env.CLAUDE_PROJECT_DIR || process.cwd() });
   } else if (cmd === "consent") {
     process.exitCode = await consentCommand(tty(), defaultAppDir(), await userLang());
