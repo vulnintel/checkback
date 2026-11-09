@@ -7,8 +7,8 @@
 [![node](https://img.shields.io/node/v/checkback)](package.json)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-checkback scans your project on your machine for the mistakes that most often leak data in apps
-built with Cursor, Claude Code, Lovable, Bolt and friends: secret keys in browser code, a committed
+checkback scans your project on your machine for common security mistakes in apps built with AI
+coding tools such as Cursor, Claude Code, Lovable and Bolt: secret keys in browser code, a committed
 `.env`, Supabase tables without RLS, Firebase rules that say `if true`, wide-open CORS, debug mode in
 production, and vulnerable or AI-invented packages. Each finding becomes a plain-language fix
 instruction you paste into the AI you already use. After the fix, run it again: checkback re-checks
@@ -21,7 +21,7 @@ Your code never leaves your machine. No account needed.
 
 <sub>Demo project with fake keys. Vulnerability data from OSV.dev, priority from VulnIntel.</sub>
 
-## Quick start (30 seconds)
+## Quick start
 
 In your project folder (Node.js 20.18 or later):
 
@@ -34,37 +34,59 @@ npx checkback
 3. Tick the findings you want fixed, press **Fix prompt for n selected**, copy, paste into your AI.
 4. When your AI is done, press **Scan again**.
 
+The first scan with lookups can take a few minutes on large dependency sets; later scans use the
+cache.
+
+Dependency checks read `package-lock.json`, `pnpm-lock.yaml` and `requirements*.txt`. A project
+that has only `bun.lock` (the Lovable default) or `uv.lock` gets every other check, but its
+dependencies are not checked yet.
+
 Prefer to stay in the terminal or in Claude Code? See [Claude Code plugin](#claude-code-plugin),
 [MCP server](#mcp-server) and [Command line](#command-line).
 
 ## Why checkback
 
 AI coding tools are good at writing apps and often good at reviewing them. They are less reliable at
-the boring parts: reading git history, matching exact package versions against advisories, and
-giving the same answer twice. Classic scanners are reliable but speak to security engineers and do
-not know Supabase or Firebase. checkback sits in between and is meant to be used together with your
-AI, not instead of it.
+the repetitive parts: reading git history, matching exact package versions against advisories, and
+giving the same answer twice. Gitleaks and osv-scanner do their own jobs well (secrets, dependency
+versions) but do not read Supabase migrations or Firebase rules. checkback sits in between and is
+meant to be used together with your AI, not instead of it.
+
+On Supabase, also run Supabase's Security Advisor: it checks your live database; checkback reads
+your code and migrations.
 
 | | checkback | Gitleaks | osv-scanner | AI code review alone |
 |---|---|---|---|---|
 | Secret keys in code and build output | Yes | Yes | No | Yes |
 | Public keys (Supabase anon, Firebase web config) left alone | Yes | Often flagged | n/a | Not measured |
-| `.env` and key files still in git history | Yes | Yes | No | Skipped in 3 of 5 repos |
+| `.env` and key files still in git history | Yes | Yes | No | Not with read-only tools |
 | Supabase RLS, Firebase rules, CORS, debug settings | Yes | No | No | Yes |
-| Vulnerable versions from lock files | Yes (OSV) | No | Yes | Misjudged one version |
+| Vulnerable versions from lock files | Yes (OSV) | No | Yes | Partly; misjudged one version |
 | Package names that do not exist (AI-invented) | Yes | No | No | Not measured |
 | Authorization, IDOR, injection, business logic | Checklist for your AI only | No | No | Yes |
-| Same input, same result, no cost per run | Yes | Yes | Yes | No |
-| Fix instructions written for a non-expert to paste into an AI | Yes | No | No | Yes |
+| Local rules: same input, same result (external lookups depend on live data) | Yes | Yes | n/a (lookups only) | No |
+| No cost per run | Yes | Yes | Yes | No |
+| Fix instructions written for a non-expert to paste into an AI | Yes | No | No (`osv-scanner fix` can upgrade some dependencies itself) | Yes |
 | Re-check that compares against the moment you asked for the fix | Yes | Re-run | Re-run | Re-ask |
 
-How we know: we compared these tools on 5 public AI-built repositories (Gitleaks 8.30.1 and
-osv-scanner 2.7.0 with defaults, one Claude Code 2.1.316 security review per repository, November
-2026). The AI review covered the widest range of issues. It said it did not look at git history in 3
-of the 5 repositories, and it called one vulnerable dependency version "patched". Each review took 24 to
-47 turns, 87 to 178 seconds and $0.50 to $1.40. checkback and osv-scanner agreed on 203 of 203
-dependency versions. Gitleaks reported 11 public keys as secrets; checkback reported none of the 13
-public keys present. A small sample, so read it as a direction, not a benchmark.
+How we know: in November 2026 we ran these tools on 5 public AI-built repositories.
+
+- checkback: a prototype of checkback's rules (before 0.1.0), not the released package.
+- Gitleaks 8.30.1 and osv-scanner 2.7.0 with their defaults.
+- AI review: Claude Code 2.1.316 with read-only tools (Read/Grep/Glob, no shell), our own review
+  prompt, one run per repository.
+
+What we saw:
+
+- The AI review covered the widest range of issues, including some in checkback's own categories
+  that the prototype missed. It said it did not look at git history in 3 of the 5 repositories, and
+  it called one vulnerable dependency version "patched". Each review took 24 to 47 turns, 87 to 178
+  seconds and $0.50 to $1.40.
+- The prototype and osv-scanner agreed on 203 of 203 dependency versions.
+- Gitleaks reported 11 public keys as secrets; the prototype reported none of the 13 public keys
+  present.
+
+A small sample, so read it as a direction, not a benchmark.
 
 ## How it works
 
@@ -177,7 +199,7 @@ or the settings page.
 | `checkback` / `checkback gui` | Start the local page and open the browser |
 | `checkback --no-open` | Same, print the URL only |
 | `checkback scan [--lang en\|ko] [--template file.yaml] [--json\|--text] [--fail-on severity]` | Scan the current folder. In a terminal: a readable report (summary by severity, each finding with file:line and a one-line description). Piped or in CI: JSON. `--json` / `--text` force one. Never prints key values or masked values |
-| `checkback sbom [--upload]` | Print a CycloneDX JSON SBOM of locked dependencies. `--upload` prints the form a VulnIntel key would send (private packages removed) |
+| `checkback sbom [--upload-preview]` | Print a CycloneDX JSON SBOM of locked dependencies. `--upload-preview` prints the form a VulnIntel key would send (private packages removed) and uploads nothing; `--upload` is an old alias |
 | `checkback mcp` | Run the MCP server over stdio |
 | `checkback consent` | Agree to external lookups in a terminal. Interactive only |
 | `checkback ignore [--remove]` | Ignore findings from the last scan (with a reason), or un-ignore them. Interactive only |
@@ -213,7 +235,9 @@ jobs:
       - run: npx -y checkback@0.1.0 scan --text --fail-on high
 ```
 
-Without consent, CI runs the local rules only (no dependency lookups).
+CI runs the local rules only, with no dependency lookups: consent can only be given by a person
+(`checkback consent` needs an interactive terminal, or the local page), and a fresh CI runner has no
+saved consent.
 
 Settings, consent, ignores and re-check baselines live outside your project:
 `%APPDATA%\checkback` on Windows, `~/Library/Application Support/checkback` on macOS and
@@ -259,22 +283,26 @@ checkback compares with the previous scan. AI judgments are not part of the comp
 
 ## What goes where
 
-checkback sends no code and no file paths anywhere. External lookups run only after you agree, and
-each can be turned off in settings.
+checkback itself sends no code and no file paths to any server. The instructions you paste into your
+AI do contain `file:line` (last row below). External lookups run only after you agree, and each can
+be turned off in settings.
 
 | Destination | When | What is sent | Never sent |
 |---|---|---|---|
 | `api.osv.dev` | Vulnerable and malicious package check | Ecosystem, name and version of packages in the lookup scope | Code, file paths, private package names |
 | `registry.npmjs.org`, `api.npmjs.org`, `pypi.org` | Non-existent package check | Package names in the lookup scope (including manifest names missing from the lock and filtered import names) | Same as above |
-| `api.vulnintelapp.com` (public lookup, no key) | Priority (KEV, VPI level, EPSS) and descriptions | CVE/GHSA IDs from OSV results and the UI language. Your IP and the ID list may stay in server access logs, and the ID list can hint at which vulnerable components you use | Package names and versions, code, paths |
+| `api.vulnintelapp.com` (public lookup, no key) | Priority (KEV, VPI level, EPSS) and descriptions | CVE/GHSA IDs from OSV results and the UI language. Your IP and the ID list may stay in access logs (VulnIntel's server and Cloudflare, which sits in front of it), and the ID list can hint at which vulnerable components you use | Package names and versions, code, paths |
 | `api.vulnintelapp.com` (with a key) | Only if you add a VulnIntel key | A locally built CycloneDX SBOM of public packages (name, version, purl, license; no project name); CVE IDs and a `checkback: <package>@<version>` note when you add them to the remediation tracker; ecosystem and name (no version) of packages you choose to watch | Code, paths, lock file names, private packages |
-| Your AI | When you paste instructions, or when your AI calls the MCP tools | Instructions and MCP responses: rule, severity, confidence, `file:line`, package, version, vulnerability IDs. Your AI tool may also read your files itself; that is between you and your AI provider | Secret values and masked values. Nothing goes to VulnIntel this way |
+| Your AI | When you paste instructions, or when your AI calls the MCP tools | Instructions and MCP responses: rule, severity, confidence, `file:line`, package, version, vulnerability IDs; `export_sbom` returns the local SBOM, which includes private packages and lock file paths. Your AI tool may also read your files itself; that is between you and your AI provider | Secret values and masked values. Nothing goes to VulnIntel this way |
 
 A package is out of the lookup scope when it comes from a private registry (scoped or default
 registry changes in `.npmrc`, `--extra-index-url`), a workspace, a file or a git URL.
 
 With a key, VulnIntel keeps scan results and SBOMs for 30 days and the uploaded original for 35
 minutes. Watched packages and remediation items stay until you delete them on the web.
+
+All requests to `api.vulnintelapp.com`, with or without a key, pass through Cloudflare (VulnIntel's
+CDN and firewall), which sees your IP and the request.
 
 Requests carry `User-Agent: checkback/<version> (+https://github.com/vulnintel/checkback)`. There is
 no telemetry.
@@ -292,6 +320,9 @@ adds two things:
 Get a key at <https://www.vulnintelapp.com/en/settings/api-keys?src=checkback>, then paste it on the
 settings page or set `VULNINTEL_API_KEY` (the environment variable wins). The settings file is
 written with mode 600 on macOS and Linux. The key is only ever sent to `api.vulnintelapp.com`.
+
+A free key includes 100 VulnIntel checks a month. When they are used up, scans show OSV results
+until the monthly reset.
 
 ## Templates and ignores
 
@@ -374,8 +405,8 @@ pnpm test                # unit and integration tests, no network
 node dist/cli.js --no-open
 ```
 
-`pnpm e2e:docker` packs the package with `npm pack`, installs the tarball in clean `node:20-slim`
-and `node:22-slim` containers and checks the CLI, MCP server and local page, once with the network
+`pnpm e2e:docker` packs the package with `npm pack`, installs the tarball in clean `node:20-slim`,
+`node:22-slim` and `node:24-slim` containers and checks the CLI, MCP server and local page, once with the network
 and once with `--network none` ([`docker/e2e/`](docker/e2e)). It needs Docker and bash.
 
 `node scripts/live-smoke.mjs` runs real OSV, npm, PyPI and VulnIntel lookups by hand; it is not part

@@ -25,7 +25,7 @@ node /path/to/checkback/dist/cli.js scan        # JSON result
 ```
 
 `pnpm e2e:docker` packs the package and checks the installed CLI, MCP server and web screen in
-clean `node:20-slim` and `node:22-slim` containers, with and without network
+clean `node:20-slim`, `node:22-slim` and `node:24-slim` containers, with and without network
 ([`docker/e2e/`](docker/e2e)). Run it for changes to the CLI, MCP, GUI server or packaging. It needs
 Docker and bash (Git Bash on Windows).
 
@@ -70,8 +70,8 @@ or Anthropic in product, feature, plugin or marketplace names.
 ## Pull requests
 
 - Keep a pull request to one change. Explain what and why, and how you tested it.
-- `pnpm build` and `pnpm test` must pass. CI runs them on Linux, Windows and macOS with Node 20 and
-  22, plus the Docker check.
+- `pnpm build` and `pnpm test` must pass. CI runs them on Linux, Windows and macOS with Node 20,
+  22 and 24, plus the Docker check.
 - No new runtime dependency without a good reason in the description.
 - Add a line to `CHANGELOG.md` under "Unreleased".
 - Commit messages follow `type: summary` (`feat`, `fix`, `docs`, `test`, `chore`, `ci`, `refactor`).

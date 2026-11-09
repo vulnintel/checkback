@@ -3,14 +3,19 @@ Copyright 2026 VulnIntel
 
 This product includes software and data from third parties:
 
-- Gitleaks (https://github.com/gitleaks/gitleaks), MIT License —
-  API key format regular expressions adapted in templates/default.yaml.
-- secretlint rule preset (https://github.com/secretlint/secretlint), MIT License —
-  API key format regular expressions adapted in templates/default.yaml.
-- yaml (https://github.com/eemeli/yaml), ISC License.
-- smol-toml (https://github.com/squirrelchat/smol-toml), BSD-3-Clause License.
+- Gitleaks (https://github.com/gitleaks/gitleaks), MIT License, Copyright (c) 2019 Zachary Rice —
+  API key format regular expressions adapted in templates/default.yaml. Full license text in
+  licenses/gitleaks.LICENSE.
+- secretlint rule preset (https://github.com/secretlint/secretlint), MIT License,
+  Copyright (c) 2020 azu — API key format regular expressions adapted in templates/default.yaml.
+  Full license text in licenses/secretlint.LICENSE.
 - npm-high-impact 1.13.0 (https://github.com/wooorm/npm-high-impact, commit 9e29478), MIT License —
   package name list snapshot in data/npm-high-impact.json (17,338 names; license in
   data/npm-high-impact.LICENSE).
+
+Runtime dependencies, installed by npm as separate packages with their own license files:
+
+- yaml (https://github.com/eemeli/yaml), ISC License.
+- smol-toml (https://github.com/squirrelchat/smol-toml), BSD-3-Clause License.
 - @cyclonedx/cyclonedx-library (https://github.com/CycloneDX/cyclonedx-javascript-library),
   Apache License 2.0.

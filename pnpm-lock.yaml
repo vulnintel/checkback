@@ -9,13 +9,13 @@ importers:
   .:
     dependencies:
       '@cyclonedx/cyclonedx-library':
-        specifier: ^10.4.0
+        specifier: 10.4.0
         version: 10.4.0(ajv-formats-draft2019@1.6.1(ajv@8.20.0))(ajv-formats@3.0.1(ajv@8.20.0))(ajv@8.20.0)
       smol-toml:
-        specifier: ^1.9.1
+        specifier: 1.9.1
         version: 1.9.1
       yaml:
-        specifier: ^2.9.1
+        specifier: 2.9.1
         version: 2.9.1
     devDependencies:
       '@types/node':
