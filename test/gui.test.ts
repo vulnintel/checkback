@@ -443,7 +443,7 @@ describe("S5 templates (AC42, AC43, AC44, AC65)", () => {
     const bad = await call<{ error: string; detail: { line?: number }[] }>("POST", "/api/templates/import", { content: "schema: 1\nid: Bad Id\nname: x\nrules: []\n" });
     expect(bad.json.error).toBe("template_invalid");
     expect(bad.json.detail[0]!.line).toBe(2);
-  });
+  }, 30_000); // ~40 sequential template writes; slow on Windows disks
 
   it("imported template text is marked external on cards (AC44)", async () => {
     const g = await gui(project({ "src/a.ts": `export const k = "${K.github()}";\n` }));
