@@ -1,9 +1,32 @@
 {
   "name": "checkback",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
   "description": "Local security check for apps built with AI coding tools",
+  "keywords": [
+    "security",
+    "secrets",
+    "secret-scanning",
+    "dependencies",
+    "vulnerability",
+    "sbom",
+    "cyclonedx",
+    "supabase",
+    "firebase",
+    "mcp",
+    "mcp-server",
+    "claude-code",
+    "vibe-coding"
+  ],
+  "homepage": "https://github.com/vulnintel/checkback#readme",
+  "bugs": {
+    "url": "https://github.com/vulnintel/checkback/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vulnintel/checkback.git"
+  },
   "license": "Apache-2.0",
+  "author": "VulnIntel (https://www.vulnintelapp.com)",
   "type": "module",
   "engines": {
     "node": ">=20.18.0"
@@ -21,12 +44,16 @@
     "templates",
     "data",
     "web/index.html",
-    "web/app.css"
+    "web/app.css",
+    "NOTICE"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json && tsc -p tsconfig.web.json",
-    "test": "vitest run"
+    "test": "vitest run --testTimeout=30000",
+    "prepublishOnly": "pnpm build && pnpm test",
+    "e2e:docker": "bash docker/e2e/run.sh"
   },
+  "packageManager": "pnpm@10.33.0",
   "dependencies": {
     "@cyclonedx/cyclonedx-library": "^10.4.0",
     "smol-toml": "^1.9.1",
