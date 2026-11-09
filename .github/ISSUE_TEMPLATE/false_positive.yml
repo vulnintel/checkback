@@ -1,0 +1,47 @@
+name: False positive or missed finding
+description: A rule reported something that is not a problem, or missed something it should catch.
+labels: [rules]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Never paste a real secret value, token or `.env` contents here, not even partly or masked.** If the key was real, revoke it first.
+        Replace values with a made-up string of the same shape (for example `sk-proj-` followed by `A` repeated), or describe the shape in words.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind
+      options:
+        - False positive (reported, but it is fine)
+        - Missed finding (should have been reported)
+        - Wrong severity or confidence
+    validations:
+      required: true
+  - type: input
+    id: rule
+    attributes:
+      label: Rule id
+      description: The `rule_id` in the result, for example `secret-openai` or `cors-wildcard`.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: checkback version
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: textarea
+    id: sample
+    attributes:
+      label: Minimal sample
+      description: Relative file path and the few lines that trigger it, with values replaced. Say whether the file is tracked by git or gitignored.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why it is (or is not) a problem
+    validations:
+      required: true
