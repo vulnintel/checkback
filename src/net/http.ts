@@ -38,8 +38,33 @@ const retryAfter = (h: string | null): number => {
   return Number.isFinite(t) ? Math.max(0, Math.min(t - Date.now(), 120_000)) : 0;
 };
 
+/** Default response size cap; OSV batch answers get a larger one. Oversized bodies fail like a network error. */
+export const MAX_BODY_BYTES = 4 * 1024 * 1024;
+
+async function readCapped(res: Response, max: number): Promise<string> {
+  if (Number(res.headers.get("content-length")) > max) {
+    await res.body?.cancel().catch(() => undefined);
+    throw new NetError("offline");
+  }
+  if (!res.body) return "";
+  const chunks: Uint8Array[] = [];
+  let n = 0;
+  const reader = res.body.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    n += value.byteLength;
+    if (n > max) {
+      await reader.cancel().catch(() => undefined);
+      throw new NetError("offline");
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
 /** One request. Throws NetError for network failures and non-2xx (body parsed as JSON when possible). */
-export async function requestJson<T>(http: Http, url: string, init: RequestInit & { timeoutMs?: number } = {}): Promise<T> {
+export async function requestJson<T>(http: Http, url: string, init: RequestInit & { timeoutMs?: number; maxBytes?: number } = {}): Promise<T> {
   let res: Response;
   try {
     res = await http.fetch(url, {
@@ -50,7 +75,13 @@ export async function requestJson<T>(http: Http, url: string, init: RequestInit 
   } catch (e) {
     throw new NetError((e as Error).name === "TimeoutError" || (e as Error).name === "AbortError" ? "timeout" : "offline");
   }
-  const text = await res.text().catch(() => "");
+  let text: string;
+  try {
+    text = await readCapped(res, init.maxBytes ?? MAX_BODY_BYTES);
+  } catch (e) {
+    if (e instanceof NetError) throw e;
+    text = "";
+  }
   let body: unknown = undefined;
   try {
     body = text ? JSON.parse(text) : undefined;

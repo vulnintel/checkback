@@ -240,8 +240,8 @@ function reachable(roots: string[], snapshots: Obj): Set<string> {
 export const normalizePyName = (n: string): string => n.toLowerCase().replace(/[-_.]+/g, "-");
 
 /**
- * requirements*.txt: `==` pins only give a version; `-r` is followed via `readInclude` (which must
- * refuse paths outside CWD); hashes, markers and constraints files are ignored.
+ * requirements*.txt: `==` pins only give a version; `-r` (*.txt / *.in only) is followed via `readInclude`
+ * (which must refuse paths outside CWD); hashes, markers and constraints files (`-c`) are ignored.
  */
 export function parseRequirements(
   text: string,
@@ -260,7 +260,8 @@ export function parseRequirements(
     if (opt) {
       if (opt[1] === "-r" || opt[1] === "--requirement") {
         const target = joinRel(dir, opt[2]!);
-        if (target && !seen.has(target)) {
+        // Only requirement-like files: `-r .env` must not turn secret lines into names sent to PyPI.
+        if (target && /\.(txt|in)$/i.test(target) && !seen.has(target)) {
           seen.add(target);
           const inc = readInclude(target);
           if (inc !== null) {

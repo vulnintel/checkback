@@ -1,6 +1,7 @@
 import { readFileSync, statSync } from "node:fs";
 import { realpath } from "node:fs/promises";
-import { resolve } from "node:path";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import { parse as parseYaml } from "yaml";
 import { collectFiles, decode, MAX_FILE_BYTES, readText, type FileEntry } from "../files.js";
@@ -37,7 +38,7 @@ export interface PrivateConfig {
   npmScopes: string[];
   /** The ecosystem's default registry/index is not public → whole ecosystem excluded (§7-2 rule 4). */
   allPrivate: Ecosystem[];
-  /** CWD-relative files that set the above. */
+  /** CWD-relative files that set the above, or user-level sources (`~/.npmrc`, `env:PIP_INDEX_URL`). */
   files: string[];
 }
 
@@ -60,8 +61,11 @@ type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
 const base = (rel: string): string => rel.slice(rel.lastIndexOf("/") + 1);
 
-/** Read every supported lockfile, manifest and registry config under `cwd`. Local only. */
-export async function readInventory(cwd: string, files?: FileEntry[]): Promise<Inventory> {
+/**
+ * Read every supported lockfile, manifest and registry config under `cwd`, plus the user-level
+ * registry settings in `env` (config files under the home folder, npm/pip env vars). Local only.
+ */
+export async function readInventory(cwd: string, files?: FileEntry[], env: NodeJS.ProcessEnv = process.env): Promise<Inventory> {
   const root = await realpath(resolve(cwd));
   const all = (files ?? (await collectFiles(root))).filter((f) => !f.build);
   const byRel = new Map(all.map((f) => [f.rel, f]));
@@ -84,6 +88,34 @@ export async function readInventory(cwd: string, files?: FileEntry[]): Promise<I
   const markScope = (scope: string, rel: string): void => {
     if (!priv.npmScopes.includes(scope)) priv.npmScopes.push(scope);
     if (!priv.files.includes(rel)) priv.files.push(rel);
+  };
+
+  /** `registry` / `@scope:registry` (npmrc key or npm_config_* env suffix) → private unless the public registry. */
+  const npmRegistry = (key: string, url: string, label: string): void => {
+    if (NPM_HOST.test(url)) return;
+    if (/^registry$/i.test(key)) markAll("npm", label);
+    else if (/^@[a-z0-9._-]+:registry$/i.test(key)) markScope(key.slice(0, key.indexOf(":")).toLowerCase(), label);
+  };
+  const npmrc = (t: string, label: string): void => {
+    for (const line of t.split(/\r?\n/)) {
+      const m = /^\s*(registry|@[a-z0-9._-]+:registry)\s*=\s*(\S+)/i.exec(line);
+      if (m) npmRegistry(m[1]!, m[2]!, label);
+    }
+  };
+  const yarnrc = (t: string, label: string): void => {
+    let y: unknown;
+    try {
+      y = parseYaml(t, { schema: "core", maxAliasCount: 50 });
+    } catch {
+      return;
+    }
+    if (!isObj(y)) return;
+    if (typeof y.npmRegistryServer === "string" && !NPM_HOST.test(y.npmRegistryServer)) markAll("npm", label);
+    if (isObj(y.npmScopes)) {
+      for (const [scope, cfg] of Object.entries(y.npmScopes)) {
+        if (isObj(cfg) && typeof cfg.npmRegistryServer === "string" && !NPM_HOST.test(cfg.npmRegistryServer)) markScope(`@${scope.replace(/^@/, "").toLowerCase()}`, label);
+      }
+    }
   };
 
   // `-r` includes: only collected files (inside CWD, no symlinks), read synchronously.
@@ -159,31 +191,104 @@ export async function readInventory(cwd: string, files?: FileEntry[]): Promise<I
       ];
       for (const s of sources) if (isObj(s) && typeof s.url === "string" && !PYPI_HOST.test(s.url)) markAll("PyPI", f.rel);
     } else if (b === ".npmrc") {
-      for (const line of ((await text(f.rel)) ?? "").split(/\r?\n/)) {
-        const m = /^\s*(@[a-z0-9._-]+):registry\s*=\s*(\S+)/i.exec(line);
-        if (m && !NPM_HOST.test(m[2]!)) markScope(m[1]!.toLowerCase(), f.rel);
-        const r = /^\s*registry\s*=\s*(\S+)/.exec(line);
-        if (r && !NPM_HOST.test(r[1]!)) markAll("npm", f.rel);
-      }
+      npmrc((await text(f.rel)) ?? "", f.rel);
     } else if (b === ".yarnrc.yml") {
-      let y: unknown;
-      try {
-        y = parseYaml((await text(f.rel)) ?? "", { schema: "core", maxAliasCount: 50 });
-      } catch {
-        continue;
-      }
-      if (!isObj(y)) continue;
-      if (typeof y.npmRegistryServer === "string" && !NPM_HOST.test(y.npmRegistryServer)) markAll("npm", f.rel);
-      if (isObj(y.npmScopes)) {
-        for (const [scope, cfg] of Object.entries(y.npmScopes)) {
-          if (isObj(cfg) && typeof cfg.npmRegistryServer === "string" && !NPM_HOST.test(cfg.npmRegistryServer)) markScope(`@${scope.replace(/^@/, "").toLowerCase()}`, f.rel);
-        }
-      }
+      yarnrc((await text(f.rel)) ?? "", f.rel);
     }
   }
+  await userRegistryConfig(env, {
+    npmrc,
+    yarnrc,
+    npmRegistry,
+    pip: (urls, label) => {
+      for (const u of urls) if (!PYPI_HOST.test(u)) markAll("PyPI", label);
+    },
+  });
   priv.npmScopes.sort();
   priv.files.sort();
   return inv;
+}
+
+interface UserConfigSinks {
+  npmrc(text: string, label: string): void;
+  yarnrc(text: string, label: string): void;
+  npmRegistry(key: string, url: string, label: string): void;
+  pip(urls: string[], label: string): void;
+}
+
+/** `index-url` / `extra-index-url` values (incl. indented continuation lines) from a pip.conf / pip.ini. */
+export function pipConfigUrls(t: string): string[] {
+  const out: string[] = [];
+  let on = false;
+  for (const line of t.split(/\r?\n/)) {
+    const m = /^([\w-]+)\s*[=:]\s*(.*)$/.exec(line);
+    if (m) {
+      on = /^(extra[-_])?index[-_]url$/i.test(m[1]!);
+      if (on) out.push(...m[2]!.split(/\s+/).filter(Boolean));
+    } else if (on && /^\s+\S/.test(line)) out.push(...line.trim().split(/\s+/));
+    else on = false;
+  }
+  return out;
+}
+
+/**
+ * §7-2 rules applied to registry settings outside the repo: a private registry set only in ~/.npmrc,
+ * pip.conf or the environment must keep private names from going out too. Read only — values (URLs,
+ * tokens) are never kept; labels name the source, with the home folder shown as `~`.
+ */
+async function userRegistryConfig(env: NodeJS.ProcessEnv, sink: UserConfigSinks): Promise<void> {
+  const home = (process.platform === "win32" ? env.USERPROFILE || env.HOME : env.HOME) || homedir();
+  const label = (p: string): string => (p.startsWith(home) ? `~${p.slice(home.length).replace(/\\/g, "/")}` : p);
+  const read = async (p: string): Promise<string | null> => {
+    const t = await readText(p);
+    return "text" in t ? t.text : null;
+  };
+  const get = (name: string): string | undefined => env[name] || env[name.toLowerCase()] || undefined;
+  const xdg = env.XDG_CONFIG_HOME || join(home, ".config");
+
+  // npm, and pnpm (reads the same npmrc plus its own rc): user npmrc, pnpm rc per OS, npm_config_* env (any case).
+  const npmrcFiles = [
+    get("NPM_CONFIG_USERCONFIG") || join(home, ".npmrc"),
+    join(xdg, "pnpm", "rc"),
+    join(env.LOCALAPPDATA || join(home, "AppData", "Local"), "pnpm", "config", "rc"),
+    join(home, "Library", "Preferences", "pnpm", "rc"),
+  ];
+  for (const p of new Set(npmrcFiles)) {
+    const t = await read(p);
+    if (t !== null) sink.npmrc(t, label(p));
+  }
+  for (const [k, v] of Object.entries(env)) {
+    const m = /^npm_config_(.+)$/i.exec(k);
+    if (m && v) sink.npmRegistry(m[1]!, v, `env:${k}`);
+  }
+  // yarn berry: home .yarnrc.yml, YARN_NPM_REGISTRY_SERVER.
+  const yarnrc = join(home, ".yarnrc.yml");
+  const y = await read(yarnrc);
+  if (y !== null) sink.yarnrc(y, label(yarnrc));
+  const yr = get("YARN_NPM_REGISTRY_SERVER");
+  if (yr) sink.yarnrc(JSON.stringify({ npmRegistryServer: yr }), "env:YARN_NPM_REGISTRY_SERVER");
+
+  // pip: every location pip reads on any OS (missing ones are skipped), PIP_CONFIG_FILE, the venv, env.
+  const pipFiles = [
+    get("PIP_CONFIG_FILE"),
+    join(env.APPDATA || join(home, "AppData", "Roaming"), "pip", "pip.ini"),
+    join(home, "pip", "pip.ini"),
+    join(env.ProgramData || env.PROGRAMDATA || "C:\\ProgramData", "pip", "pip.ini"),
+    join(xdg, "pip", "pip.conf"),
+    join(home, ".pip", "pip.conf"),
+    join(home, "Library", "Application Support", "pip", "pip.conf"),
+    "/etc/pip.conf",
+    "/etc/xdg/pip/pip.conf",
+    ...(env.VIRTUAL_ENV ? [join(env.VIRTUAL_ENV, "pip.ini"), join(env.VIRTUAL_ENV, "pip.conf")] : []),
+  ];
+  for (const p of new Set(pipFiles.filter((x): x is string => !!x))) {
+    const t = await read(p);
+    if (t !== null) sink.pip(pipConfigUrls(t), label(p));
+  }
+  for (const k of ["PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL"]) {
+    const v = get(k);
+    if (v) sink.pip(v.split(/\s+/).filter(Boolean), `env:${k}`);
+  }
 }
 
 function pythonDeps(file: string, d: Obj): ManifestDep[] {

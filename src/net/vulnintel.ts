@@ -86,6 +86,8 @@ async function keyCall<T>(
   try {
     const value = await requestJson<T>({ ...http, fetch: fetchWithHeaders }, `${VI_API}${path}`, {
       ...init,
+      // undici strips only Authorization/Cookie on cross-origin redirects: never follow one with the key.
+      redirect: "error",
       headers: { "X-Api-Key": key, ...(init.headers as Record<string, string>) },
     });
     return { ok: true, value, ...(quotaRemaining !== undefined && { quotaRemaining }) };
