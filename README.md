@@ -155,6 +155,11 @@ read its files and only install plugins from sources you trust.
 Connecting a VulnIntel key, watching packages and ignoring findings are done in `npx checkback`,
 not in the chat.
 
+If `/mcp` shows the checkback server failed to connect on first use, npx was still downloading the
+package. Run `npx -y checkback@<version> --version` once in a terminal to fill the npx cache, then
+restart Claude Code. On slow machines you can also raise Claude Code's MCP start-up timeout, for
+example `MCP_TIMEOUT=120000`.
+
 ## MCP server
 
 Any MCP client can use the same engine over stdio. Pin the version:
