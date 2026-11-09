@@ -54,6 +54,23 @@ rules:
       ko: 먼저 사람이 Supabase 대시보드에서 이 키를 폐기하고 새로 발급합니다. 레거시 JWT 키라면 새 API 키 체계(sb_secret_/sb_publishable_)로 전환하세요. 코드에서는 키 값을 지우고, 이 키를 쓰는 코드를 서버 쪽(API 라우트·서버 함수)으로 옮겨 서버 환경변수에서 읽게 하세요.
       en: First, a person revokes this key in the Supabase dashboard and issues a new one. If it is a legacy JWT key, switch to the new API key system (sb_secret_/sb_publishable_). In code, remove the value and move the code that uses it to the server side (API route or server function), reading it from a server environment variable.
 
+  # Legacy anon JWT (Lovable/Bolt default client): public by design, always info (§6-4 allowlist).
+  - id: supabase-anon-key
+    name: { ko: Supabase 공개(anon) 키 — 브라우저에 있어도 정상, en: Supabase public (anon) key — fine in the browser }
+    type: pattern
+    severity: medium
+    files: ['**/*']
+    build_output: true
+    match:
+      - 'eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}'
+    jwt_claims: { role: anon }
+    description:
+      ko: Supabase anon 키는 브라우저 코드에 두도록 만든 공개 키라서 노출 자체는 문제가 아닙니다. 데이터를 실제로 지키는 것은 이 키가 아니라 테이블의 행 수준 보안(RLS) 정책입니다. 이 키는 레거시 JWT 형식이므로 새 공개 키(sb_publishable_)로 바꾸는 것을 권장합니다.
+      en: The Supabase anon key is a public key meant to live in browser code, so seeing it there is not a problem. What actually protects your data is Row Level Security (RLS) on your tables, not this key. It uses the legacy JWT format, so switching to the new publishable key (sb_publishable_) is recommended.
+    fix_prompt:
+      ko: 이 키는 브라우저 코드에 그대로 두세요. 키를 지우거나 서버 쪽으로 옮기지 마세요. 대신 브라우저에서 읽고 쓰는 모든 테이블에 RLS가 켜져 있고, 정책이 필요한 사용자·행만 허용하는지 확인하세요. 원하면 Supabase 대시보드 API Keys에서 sb_publishable_ 키를 만들어 이 값을 그 키로 바꾸세요.
+      en: Keep this key in the browser code. Do not delete it or move it to the server. Instead, check that RLS is enabled on every table the browser reads or writes, and that its policies allow only the users and rows that need access. Optionally, create an sb_publishable_ key under API Keys in the Supabase dashboard and replace this value with it.
+
   - id: secret-supabase-pat
     name: { ko: Supabase 개인 액세스 토큰 노출, en: Supabase personal access token exposed }
     type: pattern

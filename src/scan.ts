@@ -13,7 +13,7 @@ import { ViBudget } from "./net/budget.js";
 import { Cache, defaultHttp, VERSION, type Fetch } from "./net/http.js";
 import { configValue, parseConfig, parseDotenv } from "./config-file.js";
 import {
-  collectFiles, decode, isEnvFile, MAX_FILE_BYTES, isExampleOrDoc, isSkippedPath, isTestPath, lineAt, lineTextAt, readText, type FileEntry,
+  collectFiles, decode, isEnvFile, MAX_FILE_BYTES, isExampleOrDoc, isSkippedPath, isTestPath, isVendorPath, lineAt, lineTextAt, readText, type FileEntry,
 } from "./files.js";
 import { gitInfo, globToPathspecs, type GitInfo } from "./git.js";
 import { matchAny, matchGlob } from "./glob.js";
@@ -69,6 +69,24 @@ const applies = (r: { files: string[]; exclude: string[]; build_output?: boolean
 
 const literalPath = (glob: string | undefined): string | null => (glob && !/[*?[{]/.test(glob) ? glob : null);
 
+/** The scan target is checkback's own plugin folder, not a project (MCP started without CLAUDE_PROJECT_DIR). */
+export class ProjectDirError extends Error {}
+
+const PROJECT_DIR_MSG: Record<Lang, string> = {
+  ko: "프로젝트 폴더를 알 수 없음 — checkback이 프로젝트가 아니라 Claude Code 플러그인 폴더에서 실행되었습니다. 검사 결과가 없다는 뜻이 아닙니다. 프로젝트 폴더에서 Claude Code를 다시 시작하거나, 터미널에서 프로젝트 폴더로 이동해 `npx checkback scan`을 실행하세요.",
+  en: "Project folder unknown — checkback is running in the Claude Code plugin folder, not in your project. This is not a clean result. Restart Claude Code from your project folder, or run `npx checkback scan` in a terminal inside the project folder.",
+};
+
+async function isPluginFolder(root: string): Promise<boolean> {
+  if (/[\\/]\.claude[\\/]plugins([\\/]|$)/i.test(root)) return true;
+  try {
+    // checkback's own plugin bundle (manifest + .mcp.json that starts checkback).
+    return (await stat(join(root, ".claude-plugin", "plugin.json"))).isFile() && /checkback/.test(await readFile(join(root, ".mcp.json"), "utf8"));
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Stage-1 scan of `cwd` (fixed target, spec §3) with `template`. Network only for the builtin
  * dependency checks, only after first-run consent, only to the §3-1 services.
@@ -77,6 +95,7 @@ export async function scan(cwd: string, template: Template, opts: ScanOptions = 
   const root = await realpath(resolve(cwd));
   const appDir = opts.appDir ?? defaultAppDir();
   const cfg = await readConfig(appDir);
+  if (await isPluginFolder(root)) throw new ProjectDirError(PROJECT_DIR_MSG[opts.lang ?? cfg.lang ?? "en"]);
   const step = (p: ScanPhase, n = 0): void => {
     opts.signal?.throwIfAborted();
     opts.onPhase?.(p, n);
@@ -307,12 +326,14 @@ class Run {
         occupied.add(line);
         return;
       }
+      // Claims first: an anon JWT belongs to the anon-key rule, never to the service-role rule (B2).
+      if (rule.jwt_claims) {
+        const claims = decodeJwtPayload(value);
+        if (claims && !Object.entries(rule.jwt_claims).every(([k, v]) => claims[k] === v)) return;
+      }
       if (verdict === "legacy_anon") {
         confidence = "info";
         notes.push("legacy_anon_key");
-      } else if (rule.jwt_claims) {
-        const claims = decodeJwtPayload(value);
-        if (claims && !Object.entries(rule.jwt_claims).every(([k, v]) => claims[k] === v)) return;
       }
     }
     const refine = REFINERS[rule.id];
@@ -327,7 +348,9 @@ class Run {
     confidence = await this.adjustByPath(f.rel, confidence, secret ? (isLate ? "late" : "value") : "other", notes);
     if (secret && !isLate) occupied.add(line);
     this.add({
-      ruleId: rule.id, title: this.title(rule.name, rule.id), file: f.rel, line, valueHash: this.hv(value), severity, confidence, notes, masked: mask(value), secret, build: f.build,
+      ruleId: rule.id, title: this.title(rule.name, rule.id), file: f.rel, line, valueHash: this.hv(value), severity, confidence, notes, masked: mask(value),
+      // A public anon key is not a secret: no secret_kind, so no "revoke first" step or revocation check.
+      secret: secret && !notes.includes("legacy_anon_key"), build: f.build,
     });
   }
 
@@ -534,7 +557,12 @@ class Run {
       // Import names go through the same private-registry exclusions as manifest names (§7-2).
       const imports = hall
         ? [...(await jsImports(this.files, text, workspace)), ...(await pyImports(this.files, text))].filter(
-            (i) => !priv.allPrivate.includes(i.ecosystem) && !(i.name.startsWith("@") && priv.npmScopes.includes(i.name.split("/")[0]!.toLowerCase())),
+            (i) =>
+              !priv.allPrivate.includes(i.ecosystem) &&
+              !(i.name.startsWith("@") && priv.npmScopes.includes(i.name.split("/")[0]!.toLowerCase())) &&
+              // Vendored bundles resolve their own imports; `_pytest` (→ "-pytest") is a private module, not a PyPI name.
+              !isVendorPath(i.file) &&
+              !(i.ecosystem === "PyPI" && !/^[a-z0-9]/i.test(i.name)),
           )
         : [];
       const ext = o.cfg.external ?? {};
@@ -604,7 +632,7 @@ class Run {
     for (const id of this.buildIds) {
       const b = this.findings.get(id)!;
       const s = source.get(`${b.rule_id}\0${b.value_hash}`);
-      if (s && s.secret_kind) {
+      if (s && (s.secret_kind || s.notes?.includes("legacy_anon_key"))) {
         this.findings.delete(id);
         s.notes = [...new Set([...(s.notes ?? []), "in_build_output" as const])];
       }

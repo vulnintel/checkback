@@ -101,7 +101,12 @@ export const REFINERS: Record<string, Refiner> = {
 
   "sourcemap-vite": (i) => {
     const v = i.value.replace(/^sourcemap\s*:\s*/, "").trim();
-    if (/^(true|['"]inline['"])/.test(v)) return { severity: i.severity, confidence: "confirmed" };
+    if (/^(true|['"]inline['"])/.test(v)) {
+      // Library builds (`build.lib`) publish to a registry, not a website; package/SDK folders often are libraries.
+      if (/\blib\s*:\s*\{/.test(i.text)) return { severity: i.severity, confidence: "info" };
+      if (/(^|\/)(packages|sdks?|libs?|cli)\//.test(i.file.rel)) return { severity: i.severity, confidence: "review" };
+      return { severity: i.severity, confidence: "confirmed" };
+    }
     if (/^(false|['"]hidden['"])/.test(v)) return null;
     return { severity: i.severity, confidence: "review", notes: ["env_driven"] };
   },
@@ -115,13 +120,20 @@ export function hiddenSourcemapConfig(rel: string, text: string): boolean {
   );
 }
 
+const SECRET_NAME = /SECRET|PASS|PWD|TOKEN|PRIVATE|KEY|CREDENTIAL|AUTH|SALT|SIGN/i;
+// Last name segment says what kind of value it is (VITE_GITLAB_TOKEN_TYPE, JWT_ALGORITHM, AUTH_URL).
+const DESCRIPTOR_NAME = /_(?:TYPE|KIND|MODE|ALG|ALGORITHM|URL|URI|HOST|PORT|ENDPOINT|DOMAIN|REGION|PROVIDER|SCOPES?|ISSUER|AUDIENCE|HEADER|NAME|VERSION|ENABLED|EXPIRES?|EXPIRES_IN|TTL|LENGTH|PATH)$/i;
+/** Short words joined by -_. (production, personal-access-token, HS256, us-east-1): no random key-like run. */
+const plainWords = (v: string): boolean => v.length <= 64 && /^[A-Za-z0-9]+(?:[-_.][A-Za-z0-9]+)*$/.test(v) && v.split(/[-_.]/).every((s) => s.length <= 15);
+
 /** `env-committed` content check (§6-5): true when every value is public or clearly not a secret. */
 export function envHasOnlyPublicValues(entries: Record<string, string>): boolean {
   return Object.entries(entries).every(([k, v]) => {
     if (v === "" || /^(true|false|yes|no|on|off|\d+(\.\d+)?)$/i.test(v)) return true;
     if (allowlisted(v, k) === "public" || allowlisted(v, k) === "legacy_anon") return true;
     if (/^https?:\/\/[^\s@]*$/.test(v)) return true;
-    if (/SECRET|PASSW|TOKEN|PRIVATE|KEY|CREDENTIAL|AUTH|SALT|SIGN/i.test(k)) return false;
+    if (SECRET_NAME.test(k)) return DESCRIPTOR_NAME.test(k) && plainWords(v);
+    if (plainWords(v)) return true;
     return /URL|URI|HOST|PORT|DOMAIN|REGION|PROJECT|(^|_)ID$|ENV|MODE|NAME|LOCALE|LANG|VERSION|BUCKET/i.test(k) && /^[\w.:/-]{1,200}$/.test(v);
   });
 }

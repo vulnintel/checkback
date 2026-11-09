@@ -344,7 +344,14 @@ export const COMMANDS: CmdSpec[] = [
       { flag: "--fail-on", arg: "<severity>", values: FAIL_ON, desc: "Exit 1 if a thing to fix at this severity or above exists" },
     ],
   },
-  { name: "sbom", desc: "Print a CycloneDX JSON SBOM of locked dependencies", opts: [{ flag: "--upload", desc: "Print the form a VulnIntel key would send (private packages removed)" }] },
+  {
+    name: "sbom",
+    desc: "Print a CycloneDX JSON SBOM of locked dependencies",
+    opts: [
+      { flag: "--upload-preview", desc: "Print the form a VulnIntel key would send (private packages removed); nothing is uploaded" },
+      { flag: "--upload", desc: "Deprecated alias of --upload-preview" },
+    ],
+  },
   { name: "mcp", desc: "Run the MCP server over stdio (Claude Code and other AI tools)", opts: [] },
   { name: "consent", desc: "Agree to external lookups (interactive)", opts: [] },
   { name: "ignore", desc: "Ignore findings from the last scan, with a reason (interactive)", opts: [{ flag: "--remove", desc: "Un-ignore instead" }] },
