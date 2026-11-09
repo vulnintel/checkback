@@ -85,13 +85,28 @@ describe("AC67 recheck against the fix-request snapshot", () => {
   it("(h) tracked key file renamed → paired by content hash as 'same key'", async () => {
     const appDir = tempDir();
     const dir = gitRepo(project({ "certs/server.key": K.pem(), ".gitignore": ".env\n" }));
+    git(dir, "add", "."); // tracked, not committed yet: the old path does not stay in history
+    await baseline(dir, appDir);
+    git(dir, "mv", "certs/server.key", "certs/prod.key");
+    git(dir, "commit", "-q", "-m", "b");
+    const r = await rescan(dir, appDir);
+    expect(status(r, "key-file-committed")).toEqual([["same_key", "certs/prod.key", "confirmed"]]);
+  });
+
+  it("(h2) committed key file renamed → the old path stays in git history (N3)", async () => {
+    const appDir = tempDir();
+    const dir = gitRepo(project({ "certs/server.key": K.pem(), ".gitignore": ".env\n" }));
     git(dir, "add", ".");
     git(dir, "commit", "-q", "-m", "a");
     await baseline(dir, appDir);
     git(dir, "mv", "certs/server.key", "certs/prod.key");
     git(dir, "commit", "-q", "-m", "b");
     const r = await rescan(dir, appDir);
-    expect(status(r, "key-file-committed")).toEqual([["same_key", "certs/prod.key", "confirmed"]]);
+    expect(status(r, "key-file-committed")).toEqual([
+      ["new", "certs/prod.key", "confirmed"],
+      ["remaining", "certs/server.key", "confirmed"],
+    ]);
+    expect(byRule(r, "key-file-committed").find((f) => f.location?.file === "certs/server.key")?.notes).toContain("history_only");
   });
 
   it("(i) rule turned off → 'not checked', nothing counted as resolved", async () => {

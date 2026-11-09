@@ -14,7 +14,7 @@ import { addIgnore, listIgnores, removeIgnore } from "../ignores.js";
 import { ViBudget } from "../net/budget.js";
 import { defaultHttp, VERSION, type Fetch } from "../net/http.js";
 import { checkKey } from "../net/vulnintel.js";
-import { DATA_TABLE, DISCLAIMER, osLang, PARTIAL_NOTICE, viNotice } from "../notice.js";
+import { DATA_TABLE, DISCLAIMER, osLang, scanNotices } from "../notice.js";
 import { aiCheckPromptForProject, fixPromptText, MAX_BATCH, needsRevoke, PromptError } from "../prompts.js";
 import { clearSnapshot, readLastScan, recordFixRequest } from "../recheck.js";
 import { scan, type ScanPhase } from "../scan.js";
@@ -212,10 +212,8 @@ export function createRoutes(ctx: GuiContext): { routes: Record<string, Route>; 
       const inv = await readInventory(cwd);
       const hit = new Set(r.findings.map((f) => f.rule_id));
       const name = (id: string): string => ruleName(tpl.rules.find((x) => x.id === id), { rule_id: id }, lang);
-      const vi = viNotice(r.vulnintel, lang);
       const cmp = r.compare;
       const revoked = cmp?.resolved.some((x) => x.confirm_revocation) ? new Set(await readJson<string[]>(await revokedFile(), [])) : new Set<string>();
-      const partial = r.checked.some((c) => c.reason === "timeout_partial") || r.findings.some((f) => f.notes?.includes("priority_pending"));
       return {
         scan_at: r.scan_at,
         template: { id: tpl.id, name: tpl.name, imported },
@@ -223,7 +221,7 @@ export function createRoutes(ctx: GuiContext): { routes: Record<string, Route>; 
         passed: r.checked.filter((c) => c.ran && !c.reason && !hit.has(c.rule_id)).map((c) => ({ rule_id: c.rule_id, name: name(c.rule_id) })),
         not_run: r.checked.filter((c) => !c.ran || c.reason).map((c) => ({ rule_id: c.rule_id, name: name(c.rule_id), reason: c.reason ?? "disabled" })),
         stats: r.stats,
-        notices: [...(vi ? [vi] : []), ...(partial ? [PARTIAL_NOTICE[lang]] : [])],
+        notices: scanNotices(r, lang),
         locks: inv.lockfiles.map((l) => ({ path: l.path, packages: l.packages.length })),
         manifests: inv.manifests.length,
         ai_checks: tpl.rules.filter((x) => x.type === "ai_check" && x.enabled).length,

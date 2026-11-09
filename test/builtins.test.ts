@@ -305,6 +305,24 @@ describe("vulnerable-deps (§7-3)", () => {
     expect(net.calls.filter((c) => c.url.includes("vulnintelapp"))).toHaveLength(1); // stopped after 429
   });
 
+  it("N4: a package whose priority is not complete keeps its OSV/CVSS severity (no partial VPI mix); ko→en reuses the cache", async () => {
+    const appDir = await consentedAppDir();
+    let net = mockNet({ ...osvMock, vi: { "CVE-2021-23337": { vpi_level: 5, is_kev: false }, "CVE-2021-44906": 500 } });
+    let r = await scanDefault(vulnProject(), { appDir, fetch: net.fetch, now, lang: "ko" });
+    // minimist: lookup failed → CVSS 9.8 critical, no VPI badge (complete it would be VPI-mapped, AC25).
+    expect(byRule(r, "vulnerable-deps").map((f) => [f.package, f.severity, f.vpi_level, f.notes?.includes("priority_failed") ?? false])).toEqual([
+      ["lodash", "critical", 5, false],
+      ["minimist", "critical", undefined, true],
+    ]);
+    net = mockNet({ ...osvMock, vi: { "CVE-2021-44906": { vpi_level: 3, is_kev: false } } });
+    r = await scanDefault(vulnProject(), { appDir, fetch: net.fetch, now, lang: "en" });
+    expect(net.calls.filter((c) => c.url.includes("vulnintelapp")).map((c) => c.url)).toEqual(["https://api.vulnintelapp.com/api/v1/vulnerabilities/CVE-2021-44906?lang=en"]);
+    expect(byRule(r, "vulnerable-deps").map((f) => [f.package, f.severity, f.vpi_level])).toEqual([
+      ["lodash", "critical", 5],
+      ["minimist", "medium", 3],
+    ]);
+  });
+
   it("caches: a second scan within 24h makes no VulnIntel/registry calls and no OSV detail calls", async () => {
     const appDir = await consentedAppDir();
     const dir = vulnProject();

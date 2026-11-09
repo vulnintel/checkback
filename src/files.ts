@@ -31,8 +31,10 @@ export const MAX_LINE_CHARS = 1024 * 1024;
  * Skipped: other checkouts inside the tree (a `.git` file marks a nested worktree or submodule;
  * `.claude/worktrees` is Claude Code's worktree folder) and gitignored untracked paths — except
  * browser build output (gitignored, but deployed) and `.env*` (local-only .env is judged, §5).
+ * With `nestedRepos`, folders holding their own repository (a `.git` directory: an independent
+ * clone) are skipped too and listed there; without it (root is not a repo) they are walked.
  */
-export async function collectFiles(root: string): Promise<FileEntry[]> {
+export async function collectFiles(root: string, nestedRepos?: string[]): Promise<FileEntry[]> {
   const out: FileEntry[] = [];
   const ignored = await ignoredUntracked(root);
   async function walk(abs: string, rel: string, build: boolean): Promise<void> {
@@ -42,7 +44,9 @@ export async function collectFiles(root: string): Promise<FileEntry[]> {
     } catch {
       return;
     }
-    if (rel && ents.some((e) => e.name === ".git" && e.isFile())) return;
+    const dotGit = rel ? ents.find((e) => e.name === ".git") : undefined;
+    if (dotGit?.isFile()) return;
+    if (dotGit?.isDirectory() && nestedRepos) return void nestedRepos.push(rel);
     ents.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
     for (const e of ents) {
       if (e.isSymbolicLink()) continue;

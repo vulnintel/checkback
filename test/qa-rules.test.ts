@@ -2,12 +2,14 @@
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import { readConfig, updateConfig } from "../src/appdata.js";
 import { parseCli } from "../src/commands.js";
 import { isTestPath, isVendorPath } from "../src/files.js";
-import { DATA_TABLE } from "../src/notice.js";
-import { needsRevoke } from "../src/prompts.js";
+import { loadDefaultTemplate } from "../src/index.js";
+import { DATA_TABLE, scanNotices } from "../src/notice.js";
+import { fixPromptText, needsRevoke } from "../src/prompts.js";
 import { envHasOnlyPublicValues } from "../src/refine.js";
 import { ProjectDirError } from "../src/scan.js";
 import { byRule, git, gitRepo, K, project, scanDefault, tempDir } from "./helpers.js";
@@ -186,5 +188,71 @@ describe("notice and CLI", () => {
   it("sbom --upload-preview, with --upload kept as an alias", () => {
     expect(parseCli(["sbom", "--upload-preview"])).toEqual({ kind: "run", cmd: "sbom", opts: { "--upload-preview": true } });
     expect(parseCli(["sbom", "--upload"])).toEqual({ kind: "run", cmd: "sbom", opts: { "--upload": true } });
+  });
+});
+
+describe("final QA 2026-11-10 (N3·N5·N6·N7·N8)", () => {
+  it("N3: a key file committed and then removed is still reported from git history", async () => {
+    const dir = gitRepo(project({ "server.pem": K.pem(), "a.js": "1\n" }));
+    git(dir, "add", ".");
+    git(dir, "commit", "-qm", "key");
+    git(dir, "rm", "-q", "server.pem");
+    git(dir, "commit", "-qm", "rm");
+    expect(byRule(await scanDefault(dir), "key-file-committed")).toMatchObject([{ severity: "critical", confidence: "confirmed", location: { file: "server.pem" }, notes: ["history_only"] }]);
+  });
+
+  it("N6: a shallow clone marks the history rules and says so", async () => {
+    const src = gitRepo(project({ ".env": `OPENAI_API_KEY=${K.openai()}\n`, "a.js": "1\n" }));
+    git(src, "add", ".");
+    git(src, "commit", "-qm", "a");
+    git(src, "rm", "-q", ".env");
+    git(src, "commit", "-qm", "b");
+    const full = await scanDefault(src);
+    expect(full.checked.some((c) => c.reason === "shallow_clone")).toBe(false);
+    const dst = join(tempDir(), "c");
+    git(tempDir(), "clone", "-q", "--depth", "1", pathToFileURL(src).href, dst);
+    const r = await scanDefault(dst);
+    expect(byRule(r, "env-committed")).toEqual([]);
+    expect(r.checked.filter((c) => c.reason === "shallow_clone").map((c) => c.rule_id).sort()).toEqual(["env-committed", "key-file-committed"]);
+    expect(scanNotices(r, "en").join("\n")).toContain("shallow clone");
+  });
+
+  it("N7: a separate clone inside the project is skipped and named; outside a repo it is walked", async () => {
+    const key = K.openai();
+    const dir = gitRepo(project({ "src/a.ts": `const k = "${key}";` }));
+    gitRepo(project({ "src/a.ts": `const k = "${key}";` }, join(dir, "copy")));
+    const r = await scanDefault(dir);
+    expect(byRule(r, "secret-openai").map((f) => f.location!.file)).toEqual(["src/a.ts"]);
+    expect(r.stats.nested_repos).toEqual(["copy"]);
+    expect(scanNotices(r, "ko").join("\n")).toContain("하위 폴더의 별도 git 저장소는 검사하지 않았습니다: copy");
+    const plain = project({});
+    gitRepo(project({ "src/a.ts": `const k = "${key}";` }, join(plain, "app")));
+    expect(byRule(await scanDefault(plain), "secret-openai").map((f) => f.location!.file)).toEqual(["app/src/a.ts"]);
+  });
+
+  it("N5: the same value on several lines of one file lists the other lines, and the fix prompt names them", async () => {
+    const hdr = '    return StreamingResponse(gen(), headers={\n        "Access-Control-Allow-Origin": "*",\n    })\n';
+    const r = await scanDefault(project({ "app/chat.py": `def a():\n${hdr}\ndef b():\n${hdr}` }));
+    const f = byRule(r, "cors-wildcard");
+    expect(f.map((x) => [x.location, x.related])).toEqual([[{ file: "app/chat.py", line: 3 }, ["app/chat.py:8"]]]);
+    const p = fixPromptText(f, await loadDefaultTemplate(), "en").text;
+    expect(p).toContain("Location: app/chat.py:3 (same issue also on lines (fix them all): 8)");
+  });
+
+  it("N8: import lines inside template literals (test fixtures) are not imports", async () => {
+    const src = [
+      "import real from 'real-pkg'",
+      "const fixture = `",
+      "  import { identity } from 'test-hooks'",
+      "  ${`import x from 'nested-tpl'`}",
+      "  const y = ${ { a: 1 }.a }",
+      "  import z from 'after-expr'",
+      "`",
+      "// a stray ` in a comment",
+      "const s = 'it`s'",
+      "import later from 'later-pkg'",
+    ].join("\n");
+    const r = await scanDefault(project({ "web/__tests__/a.spec.ts": src }));
+    expect(byRule(r, "hallucinated-package").map((f) => f.package).sort()).toEqual(["later-pkg", "real-pkg"]);
   });
 });

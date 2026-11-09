@@ -108,9 +108,12 @@ export async function scan(cwd: string, template: Template, opts: ScanOptions = 
     opts.onPhase?.(p, n);
   };
   step("files");
-  const files = await collectFiles(root);
+  const git = await gitInfo(root);
+  const nested: string[] = [];
+  const files = await collectFiles(root, git.isRepo ? nested : undefined);
   step("rules", files.length);
-  const run = new Run(root, files, await gitInfo(root), opts.lang ?? cfg.lang ?? "en", await installKey(appDir));
+  const run = new Run(root, files, git, opts.lang ?? cfg.lang ?? "en", await installKey(appDir));
+  run.stats.nested_repos = nested;
 
   const active: Rule[] = [];
   const builtins: BuiltinRule[] = [];
@@ -218,8 +221,11 @@ class Run {
     allowed_public_keys: 0,
     ignored: 0,
     timed_out: [],
+    nested_repos: [],
   };
   private readonly findings = new Map<string, Finding>();
+  /** Every line a finding id was seen on (N5: the same value on several lines of one file is one finding). */
+  private readonly lines = new Map<string, Set<number>>();
   private readonly buildIds = new Set<string>();
   private readonly envStates = new Map<string, Promise<"unknown" | "local-only" | "normal">>();
 
@@ -394,11 +400,10 @@ class Run {
     let paths = [...onDisk];
     if (rule.git === "tracked") {
       paths = paths.filter((p) => this.git.tracked.has(p));
-      if (rule.content_check) {
-        // §6-5 env-committed: tracked now, or present anywhere in history (all refs).
-        const hist = await this.git.historyPaths(rule.files.flatMap(globToPathspecs));
-        for (const p of [...hist].sort()) if (inScope(p) && !isSkippedPath(p) && !paths.includes(p)) paths.push(p);
-      }
+      // §6-5 committed files (.env, key files): tracked now, or present anywhere in history (all refs).
+      const hist = await this.git.historyPaths(rule.files.flatMap(globToPathspecs));
+      for (const p of [...hist].sort()) if (inScope(p) && !isSkippedPath(p) && !paths.includes(p)) paths.push(p);
+      if (this.git.shallow) this.checked.set(rule.id, { rule_id: rule.id, ran: true, reason: "shallow_clone" });
     }
     if (rule.expect === "present") {
       if (paths.length === 0) {
@@ -495,6 +500,7 @@ class Run {
 
   add(a: AddArgs): void {
     const id = fingerprint(a.ruleId, a.file ?? "", a.valueHash);
+    if (a.line !== null) this.lines.set(id, (this.lines.get(id) ?? new Set()).add(a.line));
     const prev = this.findings.get(id);
     if (prev && (prev.location?.line ?? 0) <= (a.line ?? 0)) return; // keep the first occurrence
     this.findings.set(id, {
@@ -645,9 +651,18 @@ class Run {
         s.notes = [...new Set([...(s.notes ?? []), "in_build_output" as const])];
       }
     }
+    // The other lines go to `related` as "file:line" so they are fixed too, not found one by one on re-check.
+    for (const f of this.findings.values()) {
+      const at = f.location;
+      const more = at?.line ? [...(this.lines.get(f.id) ?? [])].filter((l) => l !== at.line).sort((x, y) => x - y) : [];
+      // shortcut: lists the first MAX_RELATED_LINES lines only; a minified file can repeat one value hundreds of times.
+      if (more.length) f.related = [...(f.related ?? []), ...more.slice(0, MAX_RELATED_LINES).map((l) => `${at!.file}:${l}`)];
+    }
     return [...this.findings.values()].sort(byPriority);
   }
 }
+
+const MAX_RELATED_LINES = 20;
 
 async function readTextBuffer(abs: string): Promise<Buffer | null> {
   try {

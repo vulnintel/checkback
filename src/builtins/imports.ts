@@ -61,7 +61,9 @@ export async function jsImports(files: FileEntry[], text: (rel: string) => Promi
   for (const f of src) {
     const t = await text(f.rel);
     if (!t) continue;
+    const inTemplate = templateText(t);
     for (const m of t.matchAll(JS_RX)) {
+      if (inTemplate(m.index + m[0].length - 1)) continue; // fixture source in a test string, not an import (N8)
       const spec = (m[1] ?? m[2] ?? m[3] ?? m[4])!;
       if (/^(\.|\/|node:|[a-z]+:|~|\$|#)/.test(spec) || spec.includes("\\")) continue;
       const segs = spec.split("/");
@@ -75,6 +77,52 @@ export async function jsImports(files: FileEntry[], text: (rel: string) => Promi
     }
   }
   return out;
+}
+
+/**
+ * Is position i inside template-literal text (not its `${…}` code)? A small lexer: comments and
+ * '…' / "…" strings are skipped (those end at the line end, so a quote in a regex literal cannot
+ * run on). Positions must be asked in increasing order.
+ */
+export function templateText(t: string): (i: number) => boolean {
+  const ranges: [number, number][] = [];
+  const braces: number[] = []; // open "{" count per `${` expression we are in
+  let start = -1; // >= 0: inside template text that began here
+  for (let i = 0; i < t.length; i++) {
+    const c = t[i]!;
+    if (start >= 0) {
+      if (c === "\\") i++;
+      else if (c === "`" || (c === "$" && t[i + 1] === "{")) {
+        ranges.push([start, i]);
+        start = -1;
+        if (c === "$") {
+          braces.push(0);
+          i++;
+        }
+      }
+    } else if (c === "/" && (t[i + 1] === "/" || t[i + 1] === "*")) {
+      const line = t[i + 1] === "/";
+      const e = line ? t.indexOf("\n", i) : t.indexOf("*/", i + 2);
+      i = e < 0 ? t.length : line ? e : e + 1;
+    } else if (c === "'" || c === '"') {
+      let j = i + 1;
+      while (j < t.length && t[j] !== c && t[j] !== "\n") j += t[j] === "\\" ? 2 : 1;
+      i = j;
+    } else if (c === "`") start = i + 1;
+    else if (braces.length && c === "{") braces[braces.length - 1]!++;
+    else if (braces.length && c === "}") {
+      if (braces[braces.length - 1] === 0) {
+        braces.pop();
+        start = i + 1;
+      } else braces[braces.length - 1]!--;
+    }
+  }
+  if (start >= 0) ranges.push([start, t.length]);
+  let k = 0;
+  return (i) => {
+    while (k < ranges.length && ranges[k]![1] <= i) k++;
+    return k < ranges.length && ranges[k]![0] <= i;
+  };
 }
 
 // Top-level Python standard library modules (3.8–3.13).
