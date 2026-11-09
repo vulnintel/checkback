@@ -29,6 +29,9 @@ First public release.
 - MCP server over stdio (`checkback mcp`) with `scan`, `explain`, `fix_prompts`, `ai_check_prompt`
   and `export_sbom`. Responses never carry secret or masked values.
 - Claude Code plugin (one skill plus the MCP server) and the `vulnintel` plugin marketplace.
+- Command line: `checkback scan` prints a readable report in a terminal and JSON when piped
+  (`--text`, `--json`), `--fail-on <severity>` for CI gates, `--help`, `--version` and suggestions
+  for mistyped commands.
 - CycloneDX SBOM export (`checkback sbom`).
 - Optional VulnIntel key: watch packages for new vulnerabilities, remediation tracker, 30-day
   result history.
