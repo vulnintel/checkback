@@ -69,22 +69,33 @@ your code and migrations.
 | Fix instructions written for a non-expert to paste into an AI | Yes | No | No (`osv-scanner fix` can upgrade some dependencies itself) | Yes |
 | Re-check that compares against the moment you asked for the fix | Yes | Re-run | Re-run | Re-ask |
 
-How we know: in November 2026 we ran these tools on 5 public AI-built repositories.
+How we know: in November 2026 we ran these tools on 5 public AI-built repositories, each at a fixed
+commit.
 
-- checkback: a prototype of checkback's rules (before 0.1.0), not the released package.
-- Gitleaks 8.30.1 and osv-scanner 2.7.0 with their defaults.
+- checkback 0.1.0, the released package, with no VulnIntel key and external lookups allowed.
+- Gitleaks 8.30.1 and osv-scanner 2.7.0 with their defaults. osv-scanner was run again on the same
+  day as checkback; the Gitleaks figures are from the first round a week earlier.
 - AI review: Claude Code 2.1.316 with read-only tools (Read/Grep/Glob, no shell), our own review
-  prompt, one run per repository.
+  prompt, one run per repository (first round).
 
 What we saw:
 
-- The AI review covered the widest range of issues, including some in checkback's own categories
-  that the prototype missed. It said it did not look at git history in 3 of the 5 repositories, and
-  it called one vulnerable dependency version "patched". Each review took 24 to 47 turns, 87 to 178
-  seconds and $0.50 to $1.40.
-- The prototype and osv-scanner agreed on 203 of 203 dependency versions.
-- Gitleaks reported 11 public keys as secrets; the prototype reported none of the 13 public keys
-  present.
+- The AI review covered the widest range of issues. That includes some in checkback's own
+  categories that checkback still misses, such as a hard-coded admin password and Firestore rule
+  logic. It said it did not look at git history in 3 of the 5 repositories. It called one
+  vulnerable dependency version "patched". Each review took 24 to 47 turns, 87 to 178 seconds and
+  $0.50 to $1.40.
+- checkback and osv-scanner, run on the same day, agreed on 202 of 202 vulnerable dependency
+  versions in the lock files checkback reads.
+- The working trees held 5 public keys: three Supabase anon keys in one app, and a Clerk
+  publishable key and a PostHog key in another app's committed build output. checkback reported
+  none of them as a secret and listed the Supabase keys as safe in the browser. Gitleaks reported
+  public keys 11 times, counting copies in git history. Both reported the one real secret, a
+  Supabase access token in `.mcp.json`.
+- One app had committed a `.env` that held only public values. checkback listed it for
+  information instead of telling you to rotate keys.
+- checkback reported one issue that no other tool did: a hard-coded
+  `Access-Control-Allow-Origin: *` on streaming responses.
 
 A small sample, so read it as a direction, not a benchmark.
 
