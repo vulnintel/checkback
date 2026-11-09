@@ -3,8 +3,6 @@ name: checkback
 description: Security check for this project with checkback — leaked keys, committed .env/key files, Supabase/Firebase rules, CORS, debug settings, vulnerable/malicious/missing packages — then fix with the user's approval and re-check. Use when the user asks for a security check, "보안 점검해줘", or to verify that security fixes worked.
 ---
 
-<!-- DRAFT (stage 11): wording is finalized after experiment 1c. Structure follows spec §7-7-2. -->
-
 # checkback security check
 
 Answer in the user's language. Use only the `checkback` MCP tools for findings; the numbers and wording they return are the result.
@@ -22,7 +20,12 @@ Call `ai_check_prompt` and check those items by **reading code only** — do not
 - Never: install new packages, turn checks off, move a value to another file instead of removing it, edit lock files by hand, or change `.claude/`, checkback templates or the ignore list.
 
 ## 4. Re-check
-Call `scan` again and report the comparison. Items marked remaining, same key, moved, downgraded, lock mismatch or not checked are **"AI said fixed, but still there"** — do not report them as fixed. Exception: items with `recheck_note: "static_unverifiable"` (value set by a variable or the environment) are "needs manual check — the tool cannot verify this value"; do not report them as fixed or as still there. AI-judgment items are not re-checked by the tool: say "not verified by re-check — confirm directly".
+Call `scan` again and report each item's comparison status as the tool returns it (`recheck` on each finding, `compare.resolved` for resolved items, totals in `compare.counts`): resolved, remaining, new, same key, moved, downgraded, lock mismatch, not checked. Only items the tool reports as resolved are fixed — for every other status, do not report them as fixed.
+- `recheck_note: "version_bumped_still_vulnerable"`: say "upgraded `previous_version` → `version`, but it is still vulnerable — upgrade to `fixed_version` or later" (no `fixed_version`: "there is no fixed version yet").
+- `recheck_note: "lock_not_regenerated"`: the manifest changed but the lock file did not — ask the user to reinstall with their package manager so the lock is regenerated.
+- `recheck_note: "lock_hand_edited"`: the lock file looks hand-edited — same advice: reinstall with the package manager.
+- `recheck_note: "static_unverifiable"` (value set by a variable or the environment): say "needs manual check — the tool cannot verify this value"; do not report it as fixed or as still there.
+- AI-judgment items are not re-checked by the tool: say "not verified by re-check — confirm directly".
 
 ## Always
 - Do not quote secret values, tokens, passwords or code literals — only the location (`file:line`) and the kind.

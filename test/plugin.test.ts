@@ -11,7 +11,7 @@ const files = (dir: string): string[] =>
     return statSync(p).isDirectory() ? files(p) : [relative(join(root, "plugin"), p).split("\\").join("/")];
   });
 
-describe("AC69 plugin package (draft, §7-7-2)", () => {
+describe("AC69 plugin package (§7-7-2)", () => {
   it("contains only plugin.json, SKILL.md and .mcp.json — no hooks, bin, agents, commands", () => {
     expect(files(join(root, "plugin")).sort()).toEqual([".claude-plugin/plugin.json", ".mcp.json", "skills/checkback/SKILL.md"]);
   });
@@ -32,6 +32,7 @@ describe("AC69 plugin package (draft, §7-7-2)", () => {
     expect(cfg.command).toBe("npx");
     expect(cfg.args).toEqual(["-y", `checkback@${JSON.parse(read("plugin/.claude-plugin/plugin.json")).version}`, "mcp"]);
     expect(cfg.args[1]).toMatch(/^checkback@\d+\.\d+\.\d+$/);
+    expect(JSON.parse(read("package.json")).version).toBe(JSON.parse(read("plugin/.claude-plugin/plugin.json")).version); // released together
     expect(cfg.env).toBeUndefined();
     expect(mcp).not.toMatch(/VULNINTEL|api[_-]?key|vi_live_/i);
   });
@@ -52,5 +53,8 @@ describe("AC69 plugin package (draft, §7-7-2)", () => {
     expect(s).toMatch(/edit lock files by hand/);
     expect(s).toMatch(/Do not ask the user to widen permissions or switch to an auto-approve mode/);
     expect(s).toMatch(/revoke the key at the provider/);
+    // Q1: no "AI said fixed" bundle — statuses are reported as they are, with the recheck notes explained.
+    expect(s).not.toMatch(/AI said fixed|DRAFT/);
+    for (const n of ["version_bumped_still_vulnerable", "lock_not_regenerated", "lock_hand_edited", "static_unverifiable"]) expect(s).toContain(`recheck_note: "${n}"`);
   });
 });
