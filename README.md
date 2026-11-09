@@ -17,7 +17,7 @@ still there.
 
 Your code never leaves your machine. No account needed.
 
-![checkback results screen: 10 things to fix, critical and high badges, a vulnerable Next.js version with KEV priority and EPSS, a committed .env file and an exposed GitHub token](docs/assets/scan-results.png)
+![checkback results screen: 7 things to fix (6 critical, 1 high). The top card is Next.js 14.1.0 with known vulnerabilities, priority L5 Urgent and EPSS 99.2%, upgrade to 15.5.28 or later; then a .env file committed to git and an exposed GitHub token](docs/assets/scan-results.png)
 
 <sub>Demo project with fake keys. Vulnerability data from OSV.dev, priority from VulnIntel.</sub>
 
@@ -104,12 +104,15 @@ flowchart LR
 section per finding with `file:line`, what is wrong and how to fix it. They never contain the secret
 value and never tell the AI to install a package that is not already in your project.
 
-![Fix prompt dialog for 5 selected findings: a "person must do first" checklist for two exposed keys, then the text to paste into an AI](docs/assets/fix-prompt.png)
+![Fix prompt dialog for 5 selected findings: a "person must do first" checklist to revoke four exposed keys (two GitHub tokens, an OpenAI key, a Stripe key), then the text to paste into an AI](docs/assets/fix-prompt.png)
 
 **Scan again** compares with the moment you copied the instructions. In the demo below, the OpenAI
 key was moved into `.env.local` instead of being revoked, so checkback reports the same key:
 
-![Re-check result: an OpenAI key card marked "Same key remains" at .env.local:1, other cards marked "Still there"](docs/assets/recheck.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/recheck-dark.png">
+  <img alt="Re-check result: summary bar Resolved 3, Still there 5, New 0, Needs a look 0, compared with the fix request. Of the 5 requested items, a GitHub token in .env:1 is still there and an OpenAI key is marked &quot;Same key remains&quot; at .env.local:1" src="docs/assets/recheck.png">
+</picture>
 
 ## What it does and does not do
 
