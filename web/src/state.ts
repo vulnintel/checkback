@@ -53,11 +53,31 @@ export interface GFinding {
   recheck_note?: string;
   previous_version?: string;
   carried?: boolean;
+  /** Recheck: the baseline finding this one was paired with (moved / same key / version bump). */
+  baseline_id?: string;
   name: string;
   summary: string;
   description: string;
   external_text: boolean;
   revoke: boolean;
+}
+
+export interface ResolvedItem {
+  id: string;
+  rule_id: string;
+  title: string;
+  location: { file: string; line: number | null } | null;
+  confirm_revocation?: true;
+  revoked?: boolean;
+}
+
+/** §7-8 comparison with the fix-request snapshot (or the previous scan). Absent on a first scan. */
+export interface Compare {
+  baseline: "fix_request" | "previous";
+  baseline_at: string;
+  counts: Record<"resolved" | "remaining" | "new" | "same_key" | "moved" | "downgraded" | "lock_mismatch" | "not_checked", number>;
+  resolved: ResolvedItem[];
+  requested: string[];
 }
 
 export interface ScanView {
@@ -71,6 +91,7 @@ export interface ScanView {
   locks: { path: string; packages: number }[];
   manifests: number;
   ai_checks: number;
+  compare?: Compare;
 }
 
 export type View = "consent" | "start" | "progress" | "result" | "templates" | "sbom" | "settings";

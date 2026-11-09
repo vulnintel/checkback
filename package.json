@@ -45,6 +45,7 @@
     "data",
     "web/index.html",
     "web/app.css",
+    "web/favicon.svg",
     "NOTICE"
   ],
   "scripts": {

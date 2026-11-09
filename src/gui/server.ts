@@ -19,7 +19,7 @@ const SECURITY_HEADERS = {
   "X-Content-Type-Options": "nosniff",
   "Referrer-Policy": "no-referrer",
 };
-const TYPES: Record<string, string> = { html: "text/html; charset=utf-8", css: "text/css; charset=utf-8", js: "text/javascript; charset=utf-8" };
+const TYPES: Record<string, string> = { html: "text/html; charset=utf-8", css: "text/css; charset=utf-8", js: "text/javascript; charset=utf-8", svg: "image/svg+xml" };
 
 export interface GuiOptions extends Omit<GuiContext, "appDir"> {
   appDir?: string;
@@ -47,6 +47,7 @@ async function staticFiles(): Promise<Map<string, { type: string; body: Buffer }
   };
   await add("/", new URL("web/index.html", ROOT));
   await add("/app.css", new URL("web/app.css", ROOT));
+  await add("/favicon.svg", new URL("web/favicon.svg", ROOT));
   const js = new URL("dist/web/", ROOT);
   const walk = async (dir: URL, prefix: string): Promise<void> => {
     for (const e of await readdir(dir, { withFileTypes: true }).catch(() => [])) {
