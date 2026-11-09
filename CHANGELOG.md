@@ -39,6 +39,23 @@ First public release.
 - Template duplicate, rule on/off, import/export, custom AI checklist sentences, and an ignore list
   stored outside the project.
 
+### Reliability
+
+- The text report lists what could not be checked (offline, no consent, time limit, pending
+  priority, shallow clone, nested repositories) at the top, and names each package with its
+  current and recommended version.
+- Recommended upgrade versions are checked against every known vulnerability of the package, so
+  the tool no longer recommends a version that is itself vulnerable.
+- A lock file that cannot be read (syntax error, merge conflict, unsupported format) is reported
+  instead of silently producing no dependency findings.
+- Supabase anon keys are shown as public keys that are fine in the browser, not as service keys.
+- Key files that remain only in git history are reported, like `.env` files.
+- Workspace, path and catalog packages are no longer reported as AI-invented names.
+- External lookups stop after 90 seconds (20 in the MCP server) and continue on the next scan;
+  severities no longer change between scans while priority lookups are pending.
+- Nested git worktrees, `.claude/worktrees`, git-ignored folders and independent nested clones are
+  skipped, so the same key is not reported several times.
+
 ### Security
 
 Hardening from a self-audit before the first release:

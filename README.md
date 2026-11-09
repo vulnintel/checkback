@@ -34,8 +34,11 @@ npx checkback
 3. Tick the findings you want fixed, press **Fix prompt for n selected**, copy, paste into your AI.
 4. When your AI is done, press **Scan again**.
 
-The first scan with lookups can take a few minutes on large dependency sets; later scans use the
-cache.
+A scan waits at most 90 seconds for external lookups, then shows what it has and says what is still
+pending; the next scan continues from the cache. The public priority lookup (KEV, VPI, EPSS) runs
+at about 50 vulnerabilities a minute, so a project with a few hundred known vulnerabilities needs 3
+or 4 scans before every priority badge is filled in. Until then those packages keep their OSV/CVSS
+severity.
 
 Dependency checks read `package-lock.json`, `pnpm-lock.yaml` and `requirements*.txt`. A project
 that has only `bun.lock` (the Lovable default) or `uv.lock` gets every other check, but its
@@ -247,7 +250,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # lets the committed-.env rules see git history
+          fetch-depth: 0 # lets the committed .env / key file rules see git history
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -256,7 +259,9 @@ jobs:
 
 CI runs the local rules only, with no dependency lookups: consent can only be given by a person
 (`checkback consent` needs an interactive terminal, or the local page), and a fresh CI runner has no
-saved consent.
+saved consent. The report says so at the top, and `--fail-on` prints a warning on stderr that the
+dependency check did not run; the exit code still reflects only the checks that ran. With a shallow
+clone the report also says the git history check was partly skipped.
 
 Settings, consent, ignores and re-check baselines live outside your project:
 `%APPDATA%\checkback` on Windows, `~/Library/Application Support/checkback` on macOS and
