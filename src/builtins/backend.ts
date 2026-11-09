@@ -28,8 +28,8 @@ export interface BuiltinCtx {
 /** Replace comments and $$-bodies with spaces, keeping newlines so line numbers stay right. */
 export function stripSql(t: string, keepBodies = false): string {
   const blank = (m: string): string => m.replace(/[^\n]/g, " ");
-  let s = t.replace(/\/\*[\s\S]*?\*\//g, blank).replace(/--[^\n]*/g, blank);
-  if (!keepBodies) s = s.replace(/\$([A-Za-z_]*)\$[\s\S]*?\$\1\$/g, blank);
+  let s = t.replace(/\/\*[\s\S]*?(?:\*\/|$)/g, blank).replace(/--[^\n]*/g, blank);
+  if (!keepBodies) s = s.replace(/\$([A-Za-z_]*)\$[\s\S]*?(?:\$\1\$|$)/g, blank);
   return s;
 }
 
@@ -138,7 +138,7 @@ export async function firebaseRules(ctx: BuiltinCtx): Promise<BF[]> {
   for (const f of rulesFiles) {
     const raw = await ctx.text(f.rel);
     if (!raw) continue;
-    const t = raw.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " ")).replace(/\/\/[^\n]*/g, (m) => " ".repeat(m.length));
+    const t = raw.replace(/\/\*[\s\S]*?(?:\*\/|$)/g, (m) => m.replace(/[^\n]/g, " ")).replace(/\/\/[^\n]*/g, (m) => " ".repeat(m.length));
     const add = (kind: string, severity: Severity, confidence: Confidence, index: number, notes?: NoteCode[]): void => {
       const line = lineAt(t, index);
       out.push({ rule: R, kind, severity, confidence, file: f.rel, line, value: `${kind}:${line}`, ...(notes && { notes }) });
@@ -156,13 +156,13 @@ export async function firebaseRules(ctx: BuiltinCtx): Promise<BF[]> {
       }
       continue;
     }
-    for (const m of t.matchAll(/\ballow\s+[\w\s,]+?\s*(;|:\s*if\s+true\s*;)/g)) add("open_rules", "critical", "confirmed", m.index);
+    for (const m of t.matchAll(/\ballow\s+\w+(?:\s*,\s*\w+){0,9}\s*(;|:\s*if\s+true\s*;)/g)) add("open_rules", "critical", "confirmed", m.index);
     for (const m of t.matchAll(/request\.time\s*<\s*timestamp\.date\(\s*(\d{4})\s*,\s*(\d{1,2})\s*,\s*(\d{1,2})\s*\)/g)) {
       const expiry = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
       if (expiry > ctx.now) add("test_mode", "high", "confirmed", m.index);
       else add("test_mode_expired", "high", "info", m.index, ["expired"]);
     }
-    for (const m of t.matchAll(/\ballow\s+[\w\s,]+:\s*if\s+request\.auth\s*!=\s*null\s*;/g)) add("auth_only", "medium", "review", m.index);
+    for (const m of t.matchAll(/\ballow\s+\w+(?:\s*,\s*\w+){0,9}\s*:\s*if\s+request\.auth\s*!=\s*null\s*;/g)) add("auth_only", "medium", "review", m.index);
   }
   if (rulesFiles.length === 0 && ctx.files.some((f) => /(^|\/)firebase\.json$/.test(f.rel))) {
     out.push({ rule: R, kind: "rules_missing", severity: "medium", confidence: "info", file: null, line: null, value: "rules_missing" });
