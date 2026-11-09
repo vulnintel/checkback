@@ -166,6 +166,7 @@ const ko = {
       rule_not_checked: "이번 검사에서 이 규칙이 실행되지 않아 해결 여부를 알 수 없습니다.",
       moved_elsewhere: "같은 내용이 다른 위치로 옮겨진 것으로 보입니다.",
       moved_to_lower_confidence: "검사를 피하는 위치로 옮겨졌을 수 있습니다.",
+      static_unverifiable: "값이 변수·환경변수로 정해져 고쳐졌는지 검사로 판단할 수 없습니다. 실제 값을 직접 확인하세요.",
     } as Record<string, string>,
   },
 
@@ -472,6 +473,7 @@ const en: Dict = {
       rule_not_checked: "This rule did not run in this scan, so we cannot tell whether it was fixed.",
       moved_elsewhere: "The same content seems to have moved to another place.",
       moved_to_lower_confidence: "It may have moved to a place the check looks at less strictly.",
+      static_unverifiable: "The value comes from a variable or the environment, so the check cannot tell whether it was fixed. Confirm the actual value directly.",
     },
   },
 

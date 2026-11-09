@@ -141,6 +141,57 @@ describe("AC67 recheck against the fix-request snapshot", () => {
     expect((await rescan(dir, appDir, { fetch: net.fetch })).compare!.counts).toMatchObject({ resolved: 1, lock_mismatch: 0 });
   });
 
+  it("1c E1: manifest-only bump (lock untouched) → 'remaining', not 'lock mismatch'; judged per package", async () => {
+    const appDir = await consentedAppDir({ vulnintel: false, registry: false });
+    const net = mockNet({
+      osv: { "npm:lodash@4.17.20": ["GHSA-35jh-r3h4-6jhm"], "npm:axios@0.21.0": ["GHSA-4w2v-q235-vp99"] },
+      vulns: {
+        "GHSA-35jh-r3h4-6jhm": { id: "GHSA-35jh-r3h4-6jhm", affected: [{ package: { ecosystem: "npm", name: "lodash" }, ranges: [{ events: [{ introduced: "0" }, { fixed: "4.17.21" }] }] }] },
+        "GHSA-4w2v-q235-vp99": { id: "GHSA-4w2v-q235-vp99", affected: [{ package: { ecosystem: "npm", name: "axios" }, ranges: [{ events: [{ introduced: "0" }, { fixed: "0.21.1" }] }] }] },
+      },
+    });
+    const ent = (n: string, v: string, i: string): object => ({ version: v, resolved: `https://registry.npmjs.org/${n}/-/${n}-${v}.tgz`, integrity: i });
+    const lockText = (deps: Record<string, string>, pk: Record<string, object>): string =>
+      JSON.stringify({ name: "a", lockfileVersion: 3, packages: { "": { name: "a", dependencies: deps }, ...pk } });
+    const manifest = (deps: Record<string, string>): string => JSON.stringify({ name: "a", dependencies: deps });
+    const dir = project({
+      "package.json": manifest({ lodash: "^4.17.20", axios: "^0.21.0" }),
+      "package-lock.json": lockText({ lodash: "^4.17.20", axios: "^0.21.0" }, { "node_modules/lodash": ent("lodash", "4.17.20", "sha512-L0"), "node_modules/axios": ent("axios", "0.21.0", "sha512-A0") }),
+    });
+    await baseline(dir, appDir, net.fetch);
+    // The AI bumps axios in package.json only; the lock is not regenerated (C finance-agent, fx2-r2).
+    project({ "package.json": manifest({ lodash: "^4.17.20", axios: "^1.6.0" }) }, dir);
+    let r = await rescan(dir, appDir, { fetch: net.fetch });
+    expect(byRule(r, "vulnerable-deps").map((f) => [f.package, f.recheck]).sort()).toEqual([["axios", "remaining"], ["lodash", "remaining"]]);
+    expect(r.compare!.counts).toMatchObject({ remaining: 2, lock_mismatch: 0 });
+    // lodash properly reinstalled (new integrity, matching URL) while axios is still only bumped in the manifest:
+    // lodash is resolved — axios's manifest/lock mismatch is not lodash's problem.
+    project({ "package-lock.json": lockText({ lodash: "^4.17.20", axios: "^0.21.0" }, { "node_modules/lodash": ent("lodash", "4.17.21", "sha512-L1"), "node_modules/axios": ent("axios", "0.21.0", "sha512-A0") }) }, dir);
+    r = await rescan(dir, appDir, { fetch: net.fetch });
+    expect(r.compare!.counts).toMatchObject({ resolved: 1, remaining: 1, lock_mismatch: 0 });
+    expect(byRule(r, "vulnerable-deps").map((f) => [f.package, f.recheck])).toEqual([["axios", "remaining"]]);
+  });
+
+  it("1c E3: wildcard literal → env-driven origin list: literal resolved, variable is 'new' + check manually; unchanged variable → 'remaining' + check manually", async () => {
+    const appDir = tempDir();
+    const app = (origins: string): string =>
+      `import os\nfrom fastapi import FastAPI\nfrom fastapi.middleware.cors import CORSMiddleware\nALLOWED = [o for o in os.getenv("CORS_ORIGINS", "").split(",") if o and o != "*"]\napp = FastAPI()\napp.add_middleware(\n    CORSMiddleware,\n    allow_origins=${origins},\n    allow_credentials=True,\n)\n`;
+    const dir = project({ "app/main.py": app(`["*"]`) });
+    const base = await baseline(dir, appDir);
+    expect(byRule(base, "cors-credentials-any").map((f) => f.confidence)).toEqual(["confirmed"]); // literal wildcard still caught
+    project({ "app/main.py": app("ALLOWED") }, dir);
+    let r = await rescan(dir, appDir);
+    expect(byRule(r, "cors-credentials-any")).toMatchObject([{ recheck: "new", recheck_note: "static_unverifiable", confidence: "review", notes: ["env_driven"] }]);
+    expect(r.compare!.resolved.map((x) => x.rule_id)).toContain("cors-credentials-any");
+    // C finance-agent: baseline already had the variable; the fix was made where the list is built.
+    const appDir2 = tempDir();
+    const dir2 = project({ "app/middleware.py": app("ALLOWED") });
+    await baseline(dir2, appDir2);
+    project({ "app/config.py": "def origins():\n    return ['https://app.example.com']\n" }, dir2);
+    r = await rescan(dir2, appDir2);
+    expect(byRule(r, "cors-credentials-any")).toMatchObject([{ recheck: "remaining", recheck_note: "static_unverifiable" }]);
+  });
+
   it("(l)(m) lock consistency rules", () => {
     const st = (p: Partial<LockState>): LockState => ({ path: "package-lock.json", lockHash: "1", manifestHash: "m", manifestDeps: null, root: null, entries: {}, ...p });
     const base = st({ entries: { a: [{ version: "1.0.0", integrity: "sha512-A" }] } });

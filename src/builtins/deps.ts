@@ -109,13 +109,13 @@ export async function depsBuiltins(ctx: BuiltinCtx, d: DepsInput): Promise<DepsO
 
   // ---- local: version unknown / unsupported lock (§7-3)
   if (d.vuln) {
-    const lockDirs = new Set([...inv.lockfiles.filter((l) => l.kind !== "requirements").map((l) => l.path), ...inv.unsupported.map((u) => u.path)].map(dirOf));
-    const unsupportedDirs = new Set(inv.unsupported.map((u) => dirOf(u.path)));
+    // Only parsed lock kinds cover a manifest; an unsupported lock next to one (bun.lock + package-lock.json) does not undo that (1c E4).
+    const lockDirs = new Set(inv.lockfiles.filter((l) => l.kind !== "requirements").map((l) => dirOf(l.path)));
     for (const u of inv.unsupported) out.push({ rule: "vulnerable-deps", kind: "unsupported_lock", severity: "medium", confidence: "info", file: u.path, line: null, value: `unsupported:${u.kind}` });
     for (const m of inv.manifests) {
       if (m.deps.length === 0) continue;
       const dir = dirOf(m.path);
-      const covered = ancestors(dir).some((a) => lockDirs.has(a) && !unsupportedDirs.has(a)) ||
+      const covered = ancestors(dir).some((a) => lockDirs.has(a)) ||
         (m.ecosystem === "PyPI" && inv.lockfiles.some((l) => l.kind === "requirements" && dirOf(l.path) === dir));
       if (!covered) out.push({ rule: "vulnerable-deps", kind: "version_unknown", severity: "medium", confidence: "review", file: m.path, line: null, value: `unlocked:${m.path}` });
     }
@@ -212,7 +212,7 @@ export async function depsBuiltins(ctx: BuiltinCtx, d: DepsInput): Promise<DepsO
       const key = v.id;
       if (late(net)) return; // left for the next scan (cards keep their ids, severity may be unknown)
       const cached = net.caches.osv.get<Detail>(key, 7 * DAY, d.now);
-      if (cached && cached.modified === v.modified) return void details.set(key, { ...cached }); // copy: priority data must not leak into the 7-day cache
+      if (cached?.ranges && cached.modified === v.modified) return void details.set(key, { ...cached }); // copy: priority data must not leak into the 7-day cache
       const raw = await osvVuln(net.http, v.id);
       const det = raw ? { ...toDetail(raw), modified: v.modified || raw.modified || "" } : null;
       if (det) net.caches.osv.set(key, { ...det }, d.now);
@@ -393,9 +393,18 @@ interface Detail {
   cvss?: number;
   /** "eco:name" → fixed versions */
   fixed: Record<string, string[]>;
+  /** "eco:name" → affected ranges (OSV details only; VulnIntel results carry fixed versions only). */
+  ranges?: Record<string, AffectedRange[]>;
   vi?: ViInfo;
   /** KEV flag from a VulnIntel scan result. */
   kev?: boolean;
+}
+
+/** One OSV ECOSYSTEM/SEMVER interval: [introduced, fixed) or [introduced, last_affected]; open when neither. */
+interface AffectedRange {
+  introduced: string;
+  fixed?: string;
+  last_affected?: string;
 }
 
 interface VulnPkg {
@@ -413,10 +422,22 @@ const pkgKey = (eco: string, name: string): string => `${eco}:${eco === "PyPI" ?
 
 function toDetail(v: OsvVuln): Detail {
   const fixed: Record<string, string[]> = {};
+  const ranges: Record<string, AffectedRange[]> = {};
   for (const a of v.affected ?? []) {
     if (!a.package?.name || !a.package.ecosystem) continue;
     const k = pkgKey(a.package.ecosystem, a.package.name);
-    for (const r of a.ranges ?? []) for (const e of r.events ?? []) if (e.fixed) (fixed[k] ??= []).push(e.fixed);
+    for (const r of a.ranges ?? []) {
+      if (r.type === "GIT") continue; // commit hashes, not versions
+      let from: string | undefined;
+      for (const e of r.events ?? []) {
+        if (e.introduced !== undefined) from = e.introduced;
+        if (e.fixed) (fixed[k] ??= []).push(e.fixed);
+        if (from === undefined || !(e.fixed || e.last_affected)) continue;
+        (ranges[k] ??= []).push({ introduced: from, ...(e.fixed ? { fixed: e.fixed } : { last_affected: e.last_affected! }) });
+        from = undefined;
+      }
+      if (from !== undefined) (ranges[k] ??= []).push({ introduced: from });
+    }
   }
   const scores = (v.severity ?? []).map((s) => (/^CVSS:3/.test(s.score) ? cvss3Score(s.score) : null)).filter((x): x is number => x !== null);
   const osvSeverity = v.database_specific?.severity ?? v.affected?.find((a) => a.database_specific?.severity)?.database_specific?.severity;
@@ -427,6 +448,7 @@ function toDetail(v: OsvVuln): Detail {
     ...(osvSeverity && { osvSeverity: osvSeverity.toUpperCase() }),
     ...(scores.length && { cvss: Math.max(...scores) }),
     fixed,
+    ranges,
   };
 }
 
@@ -452,13 +474,7 @@ function vulnFinding(p: VulnPkg): BF {
   if (t.dev) notes.push("dev_dependency");
   if (p.pending) notes.push("priority_pending");
   if (p.failed) notes.push("priority_failed");
-  // Smallest fix above the current version per vuln, same major preferred; the package needs the largest of those.
-  let fix: string | undefined;
-  for (const v of p.vulns) {
-    const cands = (v.fixed[pkgKey(t.ecosystem, t.name)] ?? []).filter((f) => cmpVersion(f, t.version!) > 0).sort(cmpVersion);
-    const pick = cands.find((f) => major(f) === major(t.version!)) ?? cands[0];
-    if (pick && (!fix || cmpVersion(pick, fix) > 0)) fix = pick;
-  }
+  const fix = safeFix(p.vulns, pkgKey(t.ecosystem, t.name), t.version!);
   if (fix && major(fix) !== major(t.version!)) notes.push("major_upgrade");
   const ids = [...new Set(p.ids.map((v) => v.id).concat(p.vulns.flatMap((v) => v.aliases.filter((a) => a.startsWith("CVE-")))))].sort();
   const max = (xs: (number | null | undefined)[]): number | undefined => {
@@ -491,7 +507,29 @@ function vulnFinding(p: VulnPkg): BF {
   };
 }
 
-const pkgFields = (t: LookupScope["targets"][number]): { ecosystem: "npm" | "PyPI"; package: string; version: string | null; lockfile: string } => ({
+/**
+ * §7-3 fixed version: the smallest fixed version above `cur` that none of the package's known vulns
+ * still affects, same major preferred. A per-vuln fix can sit inside another vuln's later range
+ * (1c E2: 0.3.34 → 1.2.22 still hit by [1.0.0, 1.3.3)), so every candidate is checked against all
+ * ranges. No such version → undefined ("no fixed version"). Vulns without range data (VulnIntel
+ * results) fall back to "at least that vuln's own smallest fix".
+ */
+export function safeFix(vulns: Pick<Detail, "fixed" | "ranges">[], key: string, cur: string): string | undefined {
+  const above = (v: Pick<Detail, "fixed">): string[] => (v.fixed[key] ?? []).filter((f) => cmpVersion(f, cur) > 0).sort(cmpVersion);
+  const pick = (xs: string[]): string | undefined => xs.find((f) => major(f) === major(cur)) ?? xs[0];
+  const hits = (v: Pick<Detail, "fixed" | "ranges">, c: string): boolean => {
+    const r = v.ranges?.[key];
+    if (!r) {
+      const own = pick(above(v));
+      return !!own && cmpVersion(c, own) < 0;
+    }
+    return r.some((x) => cmpVersion(c, x.introduced) >= 0 && (x.fixed ? cmpVersion(c, x.fixed) < 0 : x.last_affected ? cmpVersion(c, x.last_affected) <= 0 : true));
+  };
+  const cands = [...new Set(vulns.flatMap(above))].sort(cmpVersion);
+  return pick(cands.filter((c) => !vulns.some((v) => hits(v, c))));
+}
+
+const pkgFields = (t:LookupScope["targets"][number]): { ecosystem: "npm" | "PyPI"; package: string; version: string | null; lockfile: string } => ({
   ecosystem: t.ecosystem,
   package: t.name,
   version: t.version,

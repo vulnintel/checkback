@@ -82,9 +82,11 @@ export const REFINERS: Record<string, Refiner> = {
       ? { severity: i.severity, confidence: "info" }
       : { severity: i.severity, confidence: i.confidence },
 
+  // `allow_origins=<variable>`: its value (env/config) cannot be read statically → note it, so a
+  // recheck says "check manually" instead of "still there" (1c E3). Literal ["*"] stays confirmed.
   "cors-credentials-any": (i) =>
     /credentials\s*:\s*true|allow_credentials\s*=\s*True|supports_credentials\s*=\s*True|Allow-Credentials['"]?\s*[:,]\s*['"]?true/i.test(i.text)
-      ? { severity: i.severity, confidence: i.confidence }
+      ? { severity: i.severity, confidence: i.confidence, ...(/^allow_origins\s*=\s*[A-Za-z_]/.test(i.value) && { notes: ["env_driven"] }) }
       : null,
 
   "debug-django": (i) => {

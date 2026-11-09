@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { safeFix } from "../src/builtins/deps.js";
 import { ViBudget } from "../src/net/budget.js";
 import { defaultHttp } from "../src/net/http.js";
 import { createSubscription, keyError, putRemediation, uploadSbom } from "../src/net/vulnintel.js";
@@ -325,6 +326,36 @@ describe("vulnerable-deps (§7-3)", () => {
       { appDir: await consentedAppDir({ vulnintel: false }), fetch: net.fetch, now },
     );
     expect(byRule(r, "vulnerable-deps")).toMatchObject([{ package: "lodash", lockfile: "a/package-lock.json", related: ["a/package-lock.json", "b/package-lock.json"] }]);
+  });
+
+  it("1c E2: fixed version escapes every known range of the package; none → no fixed version", async () => {
+    // Shape of the C langchain-core case: V1 fixed in both lines, V2 only fixed in the next major,
+    // and that fix (1.2.22) is still inside V1's second range [1.0.0, 1.3.3).
+    const v1 = { id: "GHSA-aaaa-0001", affected: [{ package: { ecosystem: "npm", name: "chainlib" }, ranges: [{ type: "ECOSYSTEM", events: [{ introduced: "0" }, { fixed: "0.3.84" }, { introduced: "1.0.0" }, { fixed: "1.3.3" }] }] }] };
+    const v2 = { id: "GHSA-aaaa-0002", affected: [{ package: { ecosystem: "npm", name: "chainlib" }, ranges: [{ type: "ECOSYSTEM", events: [{ introduced: "0" }, { fixed: "1.2.22" }] }, { type: "GIT", events: [{ introduced: "0" }, { fixed: "9badc0ffee" }] }] }] };
+    const v3 = { id: "GHSA-aaaa-0003", affected: [{ package: { ecosystem: "npm", name: "chainlib" }, ranges: [{ type: "ECOSYSTEM", events: [{ introduced: "0.3.0" }] }] }] };
+    const dir = (): string => project({ "package.json": pj({ name: "a", dependencies: { chainlib: "0.3.34" } }), "package-lock.json": lock({ chainlib: "0.3.34" }) });
+    let net = mockNet({ osv: { "npm:chainlib@0.3.34": [v1.id, v2.id] }, vulns: { [v1.id]: v1, [v2.id]: v2 }, npm: { chainlib: {} } });
+    let f = byRule(await scanDefault(dir(), { appDir: await consentedAppDir({ vulnintel: false }), fetch: net.fetch, now }), "vulnerable-deps");
+    expect(f).toMatchObject([{ kind: "vulnerable", fixed_version: "1.3.3" }]);
+    expect(f[0]!.notes).toContain("major_upgrade");
+    // An unfixed range means no version escapes all known vulns → "no fixed version", not a still-vulnerable pick.
+    net = mockNet({ osv: { "npm:chainlib@0.3.34": [v1.id, v2.id, v3.id] }, vulns: { [v1.id]: v1, [v2.id]: v2, [v3.id]: v3 }, npm: { chainlib: {} } });
+    f = byRule(await scanDefault(dir(), { appDir: await consentedAppDir({ vulnintel: false }), fetch: net.fetch, now }), "vulnerable-deps");
+    expect(f).toMatchObject([{ kind: "vulnerable_no_fix" }]);
+    expect(f[0]!.fixed_version).toBeUndefined();
+  });
+
+  it("1c E2: safeFix — last_affected is inclusive, same major preferred, no ranges → old per-vuln rule", () => {
+    const k = "npm:x";
+    expect(safeFix([{ fixed: { [k]: ["1.0.5"] }, ranges: { [k]: [{ introduced: "1.0.0", last_affected: "1.0.5" }, { introduced: "0", fixed: "1.0.5" }] } }], k, "1.0.1")).toBeUndefined();
+    expect(safeFix([{ fixed: { [k]: ["1.0.9", "2.0.1"] }, ranges: { [k]: [{ introduced: "0", fixed: "1.0.9" }, { introduced: "2.0.0", fixed: "2.0.1" }] } }], k, "1.0.1")).toBe("1.0.9");
+    expect(safeFix([{ fixed: { [k]: ["1.0.9", "2.0.1"] } }, { fixed: { [k]: ["1.2.0"] } }], k, "1.0.1")).toBe("1.2.0"); // VulnIntel results carry no ranges
+  });
+
+  it("1c E4: package-lock.json next to bun.lock → parsed, no extra 'version unknown'", async () => {
+    const r = await scanDefault(project({ "package.json": pj({ name: "a", dependencies: { x: "1.0.0" } }), "package-lock.json": lock({ x: "1.0.0" }), "bun.lock": "{}" }));
+    expect(kinds(byRule(r, "vulnerable-deps"))).toEqual([["unsupported_lock", "medium", "info"]]);
   });
 
   it("unsupported lock → info 'next release' + manifest version unknown", async () => {

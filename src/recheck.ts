@@ -134,21 +134,28 @@ export async function lockStates(inv: Inventory, files: FileEntry[]): Promise<Lo
  * (1) manifest direct names ≠ lock root names, (2) a root version breaks the manifest range or the
  * recorded spec differs, (3) same version with a different integrity, (4) a changed version keeps
  * the old integrity / has none, or the resolved URL names another version. Local checks only.
+ * With `pkg`, only that package is judged (1c E1: a manifest-only bump of one package must not
+ * flag every other dependency item of the same lock).
  */
-export function lockLooksHandEdited(base: LockState | undefined, cur: LockState | undefined): boolean {
+export function lockLooksHandEdited(base: LockState | undefined, cur: LockState | undefined, pkg?: string): boolean {
   if (!cur) return false;
   if (base && base.lockHash === cur.lockHash && base.manifestHash === cur.manifestHash) return false;
+  const only = (n: string): boolean => pkg === undefined || n === pkg;
   if (cur.root && cur.manifestDeps) {
-    const m = Object.keys(cur.manifestDeps).sort().join("\0");
-    const l = Object.keys(cur.root.deps).sort().join("\0");
-    if (m !== l) return true;
+    if (pkg === undefined) {
+      const m = Object.keys(cur.manifestDeps).sort().join("\0");
+      const l = Object.keys(cur.root.deps).sort().join("\0");
+      if (m !== l) return true;
+    } else if (Object.hasOwn(cur.manifestDeps, pkg) !== Object.hasOwn(cur.root.deps, pkg)) return true;
     for (const [n, spec] of Object.entries(cur.manifestDeps)) {
+      if (!only(n)) continue;
       if (cur.root.deps[n] !== spec) return true;
       const v = cur.root.versions[n];
       if (v && /^\d/.test(v) && !satisfies(v, spec)) return true;
     }
   }
   for (const [name, list] of Object.entries(cur.entries)) {
+    if (!only(name)) continue;
     for (const e of list) {
       const urlVer = e.resolved ? /\/-\/(?:[^/]+?)-(\d[^/]*?)\.tgz(?:[?#].*)?$/.exec(e.resolved)?.[1] : undefined;
       if (urlVer && urlVer !== e.version) return true;
@@ -198,15 +205,16 @@ export function compareWith(
   const curLock = new Map(locks.map((l) => [l.path, l]));
   const handEdited = (f: StoredFinding): boolean => {
     const p = f.lockfile ?? f.location?.file ?? "";
-    return DEP_RULES.has(f.rule_id) && lockLooksHandEdited(baseLock.get(p), curLock.get(p));
+    return DEP_RULES.has(f.rule_id) && !!f.package && lockLooksHandEdited(baseLock.get(p), curLock.get(p), f.package);
   };
+  // A value set by a variable/env (env_driven) cannot be judged fixed statically (1c E3).
+  const unverifiable = (f: Finding): string | undefined => (f.notes?.includes("env_driven") ? "static_unverifiable" : undefined);
 
   for (const b of baseFindings) {
     const same = byId.get(b.id);
     if (same) {
-      // "lock mismatch" ranks above "remaining" (§7-8 table order).
-      if (handEdited(same)) mark(same, "lock_mismatch", "lock_hand_edited");
-      else mark(same, "remaining");
+      // §7-8 "check (lock)" applies only to dependency items that disappeared; same fingerprint = "remaining".
+      mark(same, "remaining", unverifiable(same));
       continue;
     }
     if (!ranFully(b.rule_id)) {
@@ -241,8 +249,7 @@ export function compareWith(
   }
   for (const f of cur) {
     if (used.has(f.id) || baseIds.has(f.id)) continue;
-    if (handEdited(f)) mark(f, "lock_mismatch", "lock_hand_edited");
-    else mark(f, "new");
+    mark(f, "new", unverifiable(f));
   }
   return {
     findings: [...cur, ...carried],
