@@ -176,7 +176,7 @@ or the settings page.
 |---|---|
 | `checkback` / `checkback gui` | Start the local page and open the browser |
 | `checkback --no-open` | Same, print the URL only |
-| `checkback scan [--lang en\|ko] [--template file.yaml]` | Scan and print the result as JSON (no masked values) |
+| `checkback scan [--lang en\|ko] [--template file.yaml] [--json\|--text] [--fail-on severity]` | Scan the current folder. In a terminal: a readable report (summary by severity, each finding with file:line and a one-line description). Piped or in CI: JSON. `--json` / `--text` force one. Never prints key values or masked values |
 | `checkback sbom [--upload]` | Print a CycloneDX JSON SBOM of locked dependencies. `--upload` prints the form a VulnIntel key would send (private packages removed) |
 | `checkback mcp` | Run the MCP server over stdio |
 | `checkback consent` | Agree to external lookups in a terminal. Interactive only |
@@ -184,9 +184,36 @@ or the settings page.
 | `checkback watch` | With a VulnIntel key: watch locked public packages for new vulnerabilities. Interactive only |
 | `checkback track` | With a VulnIntel key: add CVEs from the last scan to your VulnIntel remediation tracker. Interactive only |
 
+`checkback --help` lists every command and option; `checkback --version` prints the version.
+
 The local page binds to `127.0.0.1` only and uses a new random token every run. It stops on Ctrl+C,
-or 30 minutes after the last tab is closed. `scan` exits 0 whether or not it finds anything; it is
-not a CI gate yet.
+or 30 minutes after the last tab is closed.
+
+Exit codes: `0` done (findings or not), `1` the `--fail-on` threshold was reached or the command
+failed, `2` unknown command or option.
+
+### In CI
+
+`scan --fail-on <critical|high|medium|low>` exits 1 when a confirmed finding ("thing to fix") at that
+severity or above exists (`low` = any severity). Review and info findings never fail the build.
+
+```yaml
+# .github/workflows/checkback.yml
+on: [push, pull_request]
+jobs:
+  checkback:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # lets the committed-.env rules see git history
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npx -y checkback@0.1.0 scan --text --fail-on high
+```
+
+Without consent, CI runs the local rules only (no dependency lookups).
 
 Settings, consent, ignores and re-check baselines live outside your project:
 `%APPDATA%\checkback` on Windows, `~/Library/Application Support/checkback` on macOS and

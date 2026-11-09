@@ -3,6 +3,7 @@
 // exactly like `consent`.
 
 import { createInterface } from "node:readline/promises";
+import { styleText } from "node:util";
 import { join } from "node:path";
 import { realpath } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -13,9 +14,10 @@ import { addIgnore, listIgnores, removeIgnore } from "./ignores.js";
 import { ViBudget } from "./net/budget.js";
 import { defaultHttp, type Fetch } from "./net/http.js";
 import { createSubscription, listRemediations, putRemediation, type KeyError } from "./net/vulnintel.js";
-import { CONSENT_HOWTO, KEY_NOTICE } from "./notice.js";
+import { KIND_TEXT } from "./builtins/text.js";
+import { CONSENT_HOWTO, DISCLAIMER, KEY_NOTICE, viNotice } from "./notice.js";
 import { readLastScan } from "./recheck.js";
-import type { Lang } from "./types.js";
+import type { Finding, Lang, LocalizedText, ScanResult, Severity, Template } from "./types.js";
 
 export type TtyIO = ConsentIO;
 export interface CommandOptions {
@@ -309,4 +311,200 @@ async function ignore(io: TtyIO, o: CommandOptions & { remove?: boolean }, ask: 
   for (const i of picked) await addIgnore(o.cwd, findings[i]!.id, reason, appDir);
   io.output.write(ko ? `${picked.length}개 무시\n` : `Ignored ${picked.length}\n`);
   return 0;
+}
+
+// ---------- command line: options, help, scan report, CI gate
+
+interface OptSpec {
+  flag: string;
+  arg?: string;
+  values?: readonly string[];
+  desc: string;
+}
+interface CmdSpec {
+  name: string;
+  desc: string;
+  opts: OptSpec[];
+}
+
+export const FAIL_ON = ["critical", "high", "medium", "low"] as const;
+export type FailOn = (typeof FAIL_ON)[number];
+
+/** Every command and option the CLI accepts; drives parsing, help and suggestions. */
+export const COMMANDS: CmdSpec[] = [
+  { name: "gui", desc: "Open the local results page in your browser (default)", opts: [{ flag: "--no-open", desc: "Print the URL instead of opening the browser" }] },
+  {
+    name: "scan",
+    desc: "Scan the current folder and print what to fix",
+    opts: [
+      { flag: "--lang", arg: "en|ko", values: ["en", "ko"], desc: "Language of the result" },
+      { flag: "--template", arg: "<file>", desc: "Use a template YAML file instead of the default" },
+      { flag: "--json", desc: "Print JSON (default when stdout is not a terminal)" },
+      { flag: "--text", desc: "Print the readable report (default in a terminal)" },
+      { flag: "--fail-on", arg: "<severity>", values: FAIL_ON, desc: "Exit 1 if a thing to fix at this severity or above exists" },
+    ],
+  },
+  { name: "sbom", desc: "Print a CycloneDX JSON SBOM of locked dependencies", opts: [{ flag: "--upload", desc: "Print the form a VulnIntel key would send (private packages removed)" }] },
+  { name: "mcp", desc: "Run the MCP server over stdio (Claude Code and other AI tools)", opts: [] },
+  { name: "consent", desc: "Agree to external lookups (interactive)", opts: [] },
+  { name: "ignore", desc: "Ignore findings from the last scan, with a reason (interactive)", opts: [{ flag: "--remove", desc: "Un-ignore instead" }] },
+  { name: "watch", desc: "Watch locked packages for new vulnerabilities (VulnIntel key, interactive)", opts: [] },
+  { name: "track", desc: "Add CVEs from the last scan to your VulnIntel remediation tracker (key, interactive)", opts: [] },
+];
+
+export const USAGE_LINE = "usage: checkback [command] [options]";
+
+export function usage(version: string): string {
+  const col = (a: string, b: string, c: string): string => `  ${a.padEnd(9)}${b.padEnd(24)}${c}`;
+  return [
+    `checkback ${version} - local security check for apps built with AI coding tools`,
+    "",
+    USAGE_LINE,
+    "",
+    "Commands:",
+    ...COMMANDS.map((c) => `  ${c.name.padEnd(9)}${c.desc}`),
+    "",
+    "Options:",
+    col("all", "-h, --help", "Show this help"),
+    col("", "-v, --version", "Print the version"),
+    ...COMMANDS.flatMap((c) => c.opts.map((o, i) => col(i ? "" : c.name, `${o.flag}${o.arg ? ` ${o.arg}` : ""}`, o.desc))),
+    "",
+    "  --fail-on takes critical, high, medium or low (low = any severity). Only confirmed findings count.",
+    "",
+    "Examples:",
+    "  npx checkback                        open the results page",
+    "  npx checkback scan                   scan in the terminal",
+    "  npx checkback scan --fail-on high    fail CI on critical or high findings",
+    "",
+    "Exit codes: 0 ok, 1 --fail-on threshold reached or the command failed, 2 usage error",
+    "Docs: https://github.com/vulnintel/checkback#readme",
+    "",
+  ].join("\n");
+}
+
+function distance(a: string, b: string): number {
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j]! + 1, cur[j - 1]! + 1, prev[j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[b.length]!;
+}
+
+/** Closest candidate within 2 edits (an unambiguous-looking prefix also counts), or undefined. */
+export function closest(word: string, candidates: string[]): string | undefined {
+  const best = candidates
+    .map((c) => ({ c, d: word.length > 1 && c.startsWith(word) ? 0.5 : distance(word, c) }))
+    .sort((x, y) => x.d - y.d)[0];
+  return best && best.d <= 2 ? best.c : undefined;
+}
+
+export type CliArgs =
+  | { kind: "help" }
+  | { kind: "version" }
+  | { kind: "error"; message: string }
+  | { kind: "run"; cmd: string; opts: Record<string, string | true> };
+
+export function parseCli(argv: string[]): CliArgs {
+  if (argv[0] === "help" || argv.some((a) => a === "-h" || a === "--help")) return { kind: "help" };
+  if (argv.some((a) => a === "-v" || a === "--version")) return { kind: "version" };
+  const implicit = argv[0] === undefined || argv[0].startsWith("-"); // `checkback --no-open` = gui
+  const cmd = implicit ? "gui" : argv[0]!;
+  const args = implicit ? argv : argv.slice(1);
+  const hint = (s: string | undefined): string => (s ? ` Did you mean "${s}"?` : "");
+  const spec = COMMANDS.find((c) => c.name === cmd);
+  if (!spec) return { kind: "error", message: `unknown command "${cmd}".${hint(closest(cmd, [...COMMANDS.map((c) => c.name), "help"]))}` };
+  const opts: Record<string, string | true> = {};
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    const eq = a.startsWith("--") ? a.indexOf("=") : -1;
+    const name = eq > 0 ? a.slice(0, eq) : a;
+    const o = spec.opts.find((x) => x.flag === name);
+    if (!o) {
+      return name.startsWith("-")
+        ? { kind: "error", message: `unknown option "${name}" for "${cmd}".${hint(closest(name, spec.opts.map((x) => x.flag)))}` }
+        : { kind: "error", message: `unexpected argument "${name}" for "${cmd}".` };
+    }
+    if (!o.arg) {
+      if (eq > 0) return { kind: "error", message: `${name} does not take a value.` };
+      opts[name] = true;
+      continue;
+    }
+    const v = eq > 0 ? a.slice(eq + 1) : args[++i];
+    if (!v || v.startsWith("-")) return { kind: "error", message: `${name} needs a value: ${o.arg}.` };
+    if (o.values && !o.values.includes(v)) return { kind: "error", message: `${name} must be one of ${o.values.join(", ")} (got "${v}").` };
+    opts[name] = v;
+  }
+  return { kind: "run", cmd, opts };
+}
+
+const SEV_RANK: Record<FailOn, number> = { critical: 3, high: 2, medium: 1, low: 0 };
+
+/** CI gate: confirmed findings ("things to fix", as in the GUI) at `threshold` or above. */
+export function failOnCount(findings: Pick<Finding, "severity" | "confidence">[], threshold: FailOn): number {
+  return findings.filter((f) => f.confidence === "confirmed" && SEV_RANK[f.severity] >= SEV_RANK[threshold]).length;
+}
+
+type Style = Parameters<typeof styleText>[0];
+const SEV_STYLE: Record<Severity, Style> = { critical: ["bold", "red"], high: ["bold", "yellow"], medium: ["bold", "cyan"] };
+const SEV_NAME: Record<Lang, Record<Severity, string>> = {
+  en: { critical: "CRITICAL", high: "HIGH", medium: "MEDIUM" },
+  ko: { critical: "긴급", high: "높음", medium: "보통" },
+};
+
+/** One-line description of a finding: the first sentence of the rule text or builtin judgment text. */
+function describe(f: Finding, tpl: Template, lang: Lang): string {
+  const rule = tpl.rules.find((r) => r.id === f.rule_id);
+  const pick = (t?: LocalizedText): string | undefined => t?.[lang] ?? t?.en ?? t?.ko;
+  const text = pick(rule && "description" in rule ? rule.description : undefined) ?? pick(KIND_TEXT[`${f.rule_id}/${f.kind}`]?.description) ?? "";
+  return (text.split(/(?<=[.!?])\s+/)[0] ?? "").replace(/\{[a-z_]+\}/g, "…");
+}
+
+/**
+ * Readable scan report for a terminal. Prints titles, locations and rule descriptions only —
+ * never secret values or masked values (same exposure as the JSON output).
+ */
+export function formatScan(r: ScanResult, tpl: Template, lang: Lang, color: boolean): string {
+  const ko = lang === "ko";
+  const paint = (style: Style, s: string): string => (color ? styleText(style, s, { validateStream: false }) : s); // caller decided TTY/NO_COLOR
+  const names = SEV_NAME[lang];
+  const cells = (s: string): number => s.length * (ko ? 2 : 1); // Hangul labels are double width
+  const width = Math.max(...Object.values(names).map(cells));
+  const pad = " ".repeat(width + 4);
+  const fix = r.findings.filter((f) => f.confidence === "confirmed");
+  const review = r.findings.filter((f) => f.confidence === "review");
+  const info = r.findings.length - fix.length - review.length;
+  const item = (f: Finding): string[] => {
+    const where = f.location ? `${f.location.file}${f.location.line ? `:${f.location.line}` : ""}` : "";
+    const desc = describe(f, tpl, lang);
+    return [
+      `  ${paint(SEV_STYLE[f.severity], names[f.severity])}${" ".repeat(width - cells(names[f.severity]))}  ${paint("bold", f.title)}`,
+      ...(where ? [pad + paint("dim", where)] : []),
+      ...(desc ? [pad + desc] : []),
+    ];
+  };
+  const sevLine = (["critical", "high", "medium"] as const).map((s) => `${names[s]} ${fix.filter((f) => f.severity === s).length}`).join(" · ");
+  const out = [
+    `${paint("bold", ko ? `고칠 일 ${fix.length}개` : `${fix.length} ${fix.length === 1 ? "thing" : "things"} to fix`)}   ${sevLine}`,
+    paint("dim", ko ? `확인 필요 ${review.length}개 · 참고 ${info}개 · 검사한 파일 ${r.stats.files}개` : `${review.length} to review · ${info} for information · ${r.stats.files} files checked`),
+    "",
+  ];
+  if (fix.length) out.push(paint("bold", ko ? "고칠 일" : "To fix"), ...fix.flatMap(item), "");
+  if (review.length) out.push(paint("bold", ko ? "확인 필요" : "To review"), ...review.flatMap(item), "");
+  if (!fix.length && !review.length) {
+    const empty = r.stats.files === 0 ? (ko ? "검사할 파일이 없습니다. 프로젝트 폴더에서 실행하세요." : "No files to check. Run it from your project folder.") : ko ? "이 도구의 규칙에 걸린 항목이 없습니다." : "Nothing matched this tool's rules.";
+    out.push(empty, "");
+  }
+  const vi = viNotice(r.vulnintel, lang);
+  out.push(
+    paint("bold", ko ? "다음 할 일" : "Next"),
+    ko ? "  npx checkback         화면에서 고칠 항목을 고르고 AI에 붙여 넣을 수정 지시문을 복사하세요" : "  npx checkback         open the results page, pick findings and copy fix prompts for your AI",
+    ko ? "  npx checkback scan    AI가 고친 뒤 다시 검사해 남은 것을 확인하세요" : "  npx checkback scan    scan again after the fix to see what is left",
+    ...(r.checked.some((c) => c.reason === "no_consent") ? [paint("dim", `  ${CONSENT_HOWTO[lang]}`)] : []),
+    ...(vi ? [paint("dim", `  ${vi}`)] : []),
+    paint("dim", `  ${DISCLAIMER[lang].split("\n")[0]}`),
+    "",
+  );
+  return out.join("\n");
 }
