@@ -274,7 +274,7 @@ export function parseRequirements(
       } else indexUrls.push(opt[2]!);
       continue;
     }
-    if (line.startsWith("-") || /^(\.|\/|[a-z+]+:\/\/)/i.test(line)) continue; // other options, paths, URLs
+    if (line.startsWith("-") || /^(\.|\/|[a-z][a-z0-9+.-]*:)/i.test(line)) continue; // other options (-e ./pkg), paths, URLs, file:../pkg
     const m = /^([A-Za-z0-9][A-Za-z0-9._-]*)\s*(\[[^\]]*\])?\s*(.*)$/.exec(line);
     if (!m) continue;
     const spec = m[3]!.split(";")[0]!.replace(/--hash=\S+/g, "").trim();

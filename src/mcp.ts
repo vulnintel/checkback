@@ -19,7 +19,7 @@ import { aiExternal, loadTemplateById, StoreError } from "./template-store.js";
 import type { CheckedRule, Finding, Lang, Template } from "./types.js";
 
 const PROTOCOLS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
-/** MCP clients time out long tool calls: external lookups get this budget, the rest continues next scan. */
+/** MCP clients time out long tool calls: the whole scan gets this budget (from its start), unfinished lookups continue next scan. */
 export const MCP_SCAN_DEADLINE_MS = 20_000;
 
 /** Finding fields an MCP response may carry — an allowlist, so masked_match/value_hash can never leak. */

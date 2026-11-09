@@ -28,7 +28,7 @@ export interface ManifestDep {
 export interface Manifest {
   path: string;
   ecosystem: Ecosystem;
-  /** package.json `name` (same-repo workspace names are never looked up). */
+  /** package.json `name` / pyproject project name, PEP 503-normalized (same-repo workspace names are never looked up). */
   name?: string;
   deps: ManifestDep[];
 }
@@ -130,6 +130,27 @@ export async function readInventory(cwd: string, files?: FileEntry[], env: NodeJ
     }
   };
 
+  // pnpm catalogs (B7): `"x": "catalog:"` takes its spec (possibly an `npm:` alias) from pnpm-workspace.yaml.
+  // shortcut: catalogs of every pnpm-workspace.yaml are merged; split per workspace root if two ever disagree.
+  const catalogs = new Map<string, Obj>();
+  for (const f of all) {
+    if (base(f.rel) !== "pnpm-workspace.yaml") continue;
+    let y: unknown;
+    try {
+      y = parseYaml((await text(f.rel)) ?? "", { schema: "core", maxAliasCount: 50 });
+    } catch {
+      continue;
+    }
+    if (!isObj(y)) continue;
+    if (isObj(y.catalog)) catalogs.set("default", { ...catalogs.get("default"), ...y.catalog });
+    if (isObj(y.catalogs)) for (const [n, c] of Object.entries(y.catalogs)) if (isObj(c)) catalogs.set(n, { ...catalogs.get(n), ...c });
+  }
+  const catalogSpec = (name: string, spec: string): string => {
+    const m = /^catalog:(.*)$/.exec(spec);
+    const v = m ? catalogs.get(m[1]!.trim() || "default")?.[name] : undefined;
+    return typeof v === "string" ? v : spec;
+  };
+
   for (const f of all) {
     const b = base(f.rel);
     const unsupported = UNSUPPORTED.get(b);
@@ -168,7 +189,7 @@ export async function readInventory(cwd: string, files?: FileEntry[], env: NodeJ
         if (!isObj(d)) continue;
         const deps: ManifestDep[] = [];
         for (const [sect, dev] of [["dependencies", false], ["optionalDependencies", false], ["devDependencies", true]] as const) {
-          if (isObj(d[sect])) for (const [name, spec] of Object.entries(d[sect])) deps.push({ name, spec: String(spec), dev });
+          if (isObj(d[sect])) for (const [name, spec] of Object.entries(d[sect])) deps.push({ name, spec: catalogSpec(name, String(spec)), dev });
         }
         inv.manifests.push({ path: f.rel, ecosystem: "npm", ...(typeof d.name === "string" && { name: d.name }), deps });
       } catch {
@@ -182,8 +203,10 @@ export async function readInventory(cwd: string, files?: FileEntry[], env: NodeJ
       } catch {
         continue;
       }
-      inv.manifests.push({ path: f.rel, ecosystem: "PyPI", deps: pythonDeps(b, d) });
       const tool = isObj(d.tool) ? d.tool : {};
+      // The project's own name: same-repo packages (uv workspace members, path deps) are never looked up (B7).
+      const own = isObj(d.project) && typeof d.project.name === "string" ? d.project.name : isObj(tool.poetry) && typeof tool.poetry.name === "string" ? tool.poetry.name : undefined;
+      inv.manifests.push({ path: f.rel, ecosystem: "PyPI", ...(own && { name: normalizePyName(own) }), deps: pythonDeps(b, d) });
       const sources = [
         ...(Array.isArray(d.source) ? d.source : []), // Pipfile [[source]]
         ...(isObj(tool.poetry) && Array.isArray(tool.poetry.source) ? tool.poetry.source : []),
@@ -317,6 +340,10 @@ function pythonDeps(file: string, d: Obj): ManifestDep[] {
   table(poetry.dependencies, false);
   table(poetry["dev-dependencies"], true);
   if (isObj(poetry.group)) for (const g of Object.values(poetry.group)) if (isObj(g)) table(g.dependencies, true);
+  // [tool.uv.sources] workspace / path / git / url entries are not from PyPI (B7).
+  const uv = isObj(d.tool) && isObj(d.tool.uv) && isObj(d.tool.uv.sources) ? d.tool.uv.sources : {};
+  const local = new Set(Object.entries(uv).filter(([, v]) => [v].flat().some((s) => isObj(s) && (s.workspace === true || s.path || s.git || s.url))).map(([n]) => normalizePyName(n)));
+  for (const x of out) if (local.has(x.name)) x.spec = "local:";
   return out;
 }
 
@@ -347,11 +374,11 @@ const npmScope = (name: string): string | null => (name.startsWith("@") ? name.s
  */
 export function lookupScope(inv: Inventory): LookupScope {
   const priv = inv.privateConfig;
-  const workspace = new Set(inv.manifests.flatMap((m) => (m.name ? [m.name] : [])));
+  const workspace = new Set(inv.manifests.flatMap((m) => (m.name ? [`${m.ecosystem}\0${m.name}`] : [])));
   const excluded = { local: 0, workspace: 0, private_scope: 0, private_registry: 0 };
   const reason = (eco: Ecosystem, name: string, origin: Package["origin"]): keyof typeof excluded | null => {
     if (origin === "local") return "local";
-    if (eco === "npm" && workspace.has(name)) return "workspace";
+    if (workspace.has(`${eco}\0${eco === "PyPI" ? normalizePyName(name) : name}`)) return "workspace";
     if (priv.allPrivate.includes(eco)) return "private_registry";
     const scope = eco === "npm" ? npmScope(name) : null;
     if (scope && priv.npmScopes.includes(scope)) return "private_scope";

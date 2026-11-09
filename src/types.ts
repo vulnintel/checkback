@@ -18,6 +18,7 @@ export type NoteCode =
   | "dev_build" // Next.js dev-server output (.next/static/development present), not a deploy artifact
   | "dev_dependency" // development dependency
   | "major_upgrade" // fixed version is a new major — check compatibility
+  | "fix_unverified" // fixed version not yet checked against OSV (offline / time budget) — confirm before upgrading
   | "severity_unknown" // no KEV/VPI/OSV severity/CVSS
   | "priority_pending" // VulnIntel priority lookup not done yet (budget) — next scan continues from cache
   | "priority_failed" // VulnIntel lookup failed — sorted by OSV severity

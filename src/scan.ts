@@ -42,8 +42,9 @@ export interface ScanOptions {
   /** Compare with the fix-request snapshot / previous scan and store this scan (§7-8). Default true. */
   recheck?: boolean;
   /**
-   * Wall-clock budget for external lookups (MCP: 20 s). Lookups not started in time are left
-   * pending and continue from cache on the next scan. Default: no limit.
+   * Wall-clock budget for the whole scan, counted from its start (MCP: 20 s). External lookups
+   * still running or not started by then are left pending and continue from cache on the next
+   * scan. Default: DEFAULT_SCAN_DEADLINE_MS (CLI/GUI).
    */
   deadlineMs?: number;
   /** Key mode: ask VulnIntel again even if this exact SBOM already has a result ([다시 조회]). */
@@ -55,6 +56,11 @@ export interface ScanOptions {
 }
 
 export type ScanPhase = "files" | "rules" | "deps" | "external" | "finish";
+
+/** CLI/GUI scan budget (B6: a cold first scan took up to 5 min, mostly paced VulnIntel lookups). */
+export const DEFAULT_SCAN_DEADLINE_MS = 90_000;
+/** External lookups get at least this much (capped by the budget) even after slow local stages, so repeated scans progress. */
+const MIN_LOOKUP_MS = 5_000;
 
 const CONF_RANK: Record<Confidence, number> = { confirmed: 0, review: 1, info: 2 };
 const SEV_RANK: Record<Severity, number> = { critical: 0, high: 1, medium: 2 };
@@ -74,6 +80,7 @@ const literalPath = (glob: string | undefined): string | null => (glob && !/[*?[
  * dependency checks, only after first-run consent, only to the §3-1 services.
  */
 export async function scan(cwd: string, template: Template, opts: ScanOptions = {}): Promise<ScanResult> {
+  const started = Date.now();
   const root = await realpath(resolve(cwd));
   const appDir = opts.appDir ?? defaultAppDir();
   const cfg = await readConfig(appDir);
@@ -108,7 +115,8 @@ export async function scan(cwd: string, template: Template, opts: ScanOptions = 
   const now = (opts.now ?? Date.now)();
   step("deps", files.length);
   const inv = await readInventory(root, files);
-  const deadline = Date.now() + (opts.deadlineMs ?? Number.MAX_SAFE_INTEGER / 2);
+  const budget = opts.deadlineMs ?? DEFAULT_SCAN_DEADLINE_MS;
+  const deadline = Math.max(started + budget, Date.now() + Math.min(budget, MIN_LOOKUP_MS));
   step("external", files.length);
   await run.builtins(builtins, { cfg, appDir, fetch: opts.fetch, now, inv, deadline, refresh: !!opts.refreshVulnIntel });
 

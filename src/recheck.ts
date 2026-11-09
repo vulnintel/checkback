@@ -210,12 +210,15 @@ export function compareWith(
   };
   // A value set by a variable/env (env_driven) cannot be judged fixed statically (1c E3).
   const unverifiable = (f: Finding): string | undefined => (f.notes?.includes("env_driven") ? "static_unverifiable" : undefined);
-  // Q4: a dependency item still there while its manifest changed and its lock did not → "reinstall" note.
+  // Q4: a dependency item still there while its manifest declaration changed and its lock did not →
+  // "reinstall" note. Per package (B12, like 1c E1): untouched and transitive packages get none.
   const lockNotRegenerated = (f: Finding): string | undefined => {
-    if (!DEP_RULES.has(f.rule_id)) return undefined;
+    if (!DEP_RULES.has(f.rule_id) || !f.package) return undefined;
     const p = f.lockfile ?? f.location?.file ?? "";
     const [bl, cl] = [baseLock.get(p), curLock.get(p)];
-    return bl && cl && bl.lockHash === cl.lockHash && bl.manifestHash !== cl.manifestHash ? "lock_not_regenerated" : undefined;
+    if (!bl || !cl || bl.lockHash !== cl.lockHash || bl.manifestHash === cl.manifestHash) return undefined;
+    const spec = (m: LockState["manifestDeps"]): string | undefined => (m && Object.hasOwn(m, f.package!) ? m[f.package!] : undefined);
+    return spec(bl.manifestDeps) !== spec(cl.manifestDeps) ? "lock_not_regenerated" : undefined;
   };
   // Q3: a new vulnerable item of the same ecosystem + package at another version, same lock preferred.
   const bumpedTo = (b: StoredFinding): Finding | undefined => {

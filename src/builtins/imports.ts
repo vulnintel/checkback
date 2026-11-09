@@ -3,6 +3,7 @@
 import { builtinModules } from "node:module";
 import { lineAt, type FileEntry } from "../files.js";
 import { normalizePyName } from "../deps/locks.js";
+import { mapLimit } from "../net/http.js";
 
 export interface ImportRef {
   ecosystem: "npm" | "PyPI";
@@ -19,6 +20,11 @@ const NODE_BUILTIN = new Set(builtinModules.map((m) => m.replace(/^node:/, "")))
 const JS_RX =
   /(?:^|[^\w.$])(?:import|export)\s(?:(?!\b(?:import|export)\b)[^'"`;])*?from\s*['"]([^'"]+)['"]|(?:^|[^\w.$])import\s*['"]([^'"]+)['"]|\brequire\(\s*['"]([^'"]+)['"]\s*\)|\bimport\(\s*['"]([^'"]+)['"]\s*\)/g;
 const PKG_NAME = /^(@[a-z0-9._-]+\/)?[A-Za-z0-9._-]+$/;
+/** Files read ahead in parallel (B6: one-by-one reads took ~40 s on a 16k-file repo on Windows). */
+const READ_AHEAD = 16;
+
+/** Start reading `files` in parallel; `text` caches, so the in-order pass below gets them from memory. */
+const readAhead = (files: FileEntry[], text: (rel: string) => Promise<string | null>): Promise<unknown> => mapLimit(files, READ_AHEAD, (f) => text(f.rel));
 
 /** JS/TS bare specifiers minus Node builtins, tsconfig paths/baseUrl dirs, bundler aliases, workspace names, same-name local folders/files. */
 export async function jsImports(files: FileEntry[], text: (rel: string) => Promise<string | null>, workspace: Set<string>): Promise<ImportRef[]> {
@@ -50,8 +56,9 @@ export async function jsImports(files: FileEntry[], text: (rel: string) => Promi
   }
   const out: ImportRef[] = [];
   const seen = new Set<string>();
-  for (const f of files) {
-    if (f.build || !/\.(jsx?|tsx?|mjs|cjs|vue|svelte)$/.test(f.rel)) continue;
+  const src = files.filter((f) => !f.build && /\.(jsx?|tsx?|mjs|cjs|vue|svelte)$/.test(f.rel));
+  await readAhead(src, text);
+  for (const f of src) {
     const t = await text(f.rel);
     if (!t) continue;
     for (const m of t.matchAll(JS_RX)) {
@@ -111,8 +118,9 @@ export async function pyImports(files: FileEntry[], text: (rel: string) => Promi
   }
   const out: ImportRef[] = [];
   const seen = new Set<string>();
-  for (const f of files) {
-    if (f.build || !f.rel.endsWith(".py")) continue;
+  const src = files.filter((f) => !f.build && f.rel.endsWith(".py"));
+  await readAhead(src, text);
+  for (const f of src) {
     const t = await text(f.rel);
     if (!t) continue;
     for (const m of t.matchAll(/^[ \t]*(?:from[ \t]+([A-Za-z_][\w.]*)[ \t]+import\b|import[ \t]+([A-Za-z_][\w.]*(?:[ \t]*,[ \t]*[A-Za-z_][\w.]*)*))/gm)) {

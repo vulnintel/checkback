@@ -297,6 +297,25 @@ describe("AC67 recheck against the fix-request snapshot", () => {
       r = await rescan(dir, appDir, { fetch: net.fetch });
       expect(deps(r)).toEqual([["remaining", "4.17.20", undefined, undefined]]);
     });
+
+    it("B12: the Q4 note goes only to the package whose manifest declaration changed — not untouched or transitive ones", async () => {
+      const ev = [{ introduced: "0" }, { fixed: "99.0.0" }];
+      const net = mockNet({
+        osv: { "npm:lodash@4.17.20": ["GHSA-lo"], "npm:ms@2.0.0": ["GHSA-ms"], "npm:esb@0.1.0": ["GHSA-es"] },
+        vulns: { "GHSA-lo": range("npm", "lodash", "GHSA-lo", ev), "GHSA-ms": range("npm", "ms", "GHSA-ms", ev), "GHSA-es": range("npm", "esb", "GHSA-es", ev) },
+      });
+      const appDir = await consentedAppDir({ vulnintel: false, registry: false });
+      const pk = { "node_modules/lodash": ent("lodash", "4.17.20", "sha512-L"), "node_modules/ms": ent("ms", "2.0.0", "sha512-M"), "node_modules/esb": ent("esb", "0.1.0", "sha512-E") };
+      const dir = project({ "package.json": manifest({ lodash: "^4.17.20", ms: "2.0.0" }), "package-lock.json": lockText({ lodash: "^4.17.20", ms: "2.0.0" }, pk) });
+      await baseline(dir, appDir, net.fetch);
+      project({ "package.json": manifest({ lodash: "^4.17.21", ms: "2.0.0" }) }, dir);
+      const r = await rescan(dir, appDir, { fetch: net.fetch });
+      expect(byRule(r, "vulnerable-deps").map((f) => [f.package, f.recheck, f.recheck_note]).sort()).toEqual([
+        ["esb", "remaining", undefined],
+        ["lodash", "remaining", "lock_not_regenerated"],
+        ["ms", "remaining", undefined],
+      ]);
+    });
   });
 
   it("(l)(m) lock consistency rules", () => {

@@ -19,6 +19,10 @@ const DAY = 86_400_000;
 const PUBLIC_LOOKUP_CAP = 200;
 const VI_BURST = 15;
 const VI_INTERVAL_MS = 1200;
+/** B1: rounds of "ask OSV about the candidate fixed versions" (a dirty candidate can reveal newer fixes). */
+const FIX_ROUNDS = 4;
+/** Above this, timers overflow; requestJson's own 30 s timeout bounds such waits anyway. */
+const MAX_TIMER_MS = 2 ** 31 - 1;
 
 export interface NetCtx {
   http: Http;
@@ -36,6 +40,20 @@ export interface NetCtx {
 }
 
 const late = (net: NetCtx): boolean => Date.now() >= net.deadline;
+
+/** Requests and waits still running at the deadline end there too (B15: in-flight calls overran the MCP budget). */
+function untilDeadline(h: Http, deadline: number): Http {
+  return {
+    ...h,
+    fetch: (url, init) => {
+      const left = Math.max(0, deadline - Date.now());
+      if (left >= MAX_TIMER_MS) return h.fetch(url, init);
+      const stop = AbortSignal.timeout(left);
+      return h.fetch(url, { ...init, signal: init?.signal ? AbortSignal.any([init.signal, stop]) : stop });
+    },
+    sleep: (ms) => h.sleep(Math.max(0, Math.min(ms, deadline - Date.now()))),
+  };
+}
 
 export interface DepsInput {
   inv: Inventory;
@@ -105,23 +123,37 @@ export async function depsBuiltins(ctx: BuiltinCtx, d: DepsInput): Promise<DepsO
   const out: BF[] = [];
   let vuln: Reason;
   let hall: Reason;
-  const { inv, scope, net } = d;
+  const { inv, scope } = d;
+  const net: NetCtx | null = d.net && { ...d.net, http: untilDeadline(d.net.http, d.net.deadline) };
 
-  // ---- local: version unknown / unsupported lock (§7-3)
+  // ---- local: version unknown / unreadable or unsupported lock (§7-3)
   if (d.vuln) {
-    // Only parsed lock kinds cover a manifest; an unsupported lock next to one (bun.lock + package-lock.json) does not undo that (1c E4).
-    const lockDirs = new Set(inv.lockfiles.filter((l) => l.kind !== "requirements").map((l) => dirOf(l.path)));
-    for (const u of inv.unsupported) out.push({ rule: "vulnerable-deps", kind: "unsupported_lock", severity: "medium", confidence: "info", file: u.path, line: null, value: `unsupported:${u.kind}` });
+    // Any lock of the manifest's ecosystem in its folder or above covers it: parsed ones are checked,
+    // broken / not-yet-supported ones get their own item below — never "no lock file" (B3, B8).
+    const lockDirs = new Set([
+      ...inv.lockfiles.filter((l) => l.kind !== "requirements").map((l) => `npm\0${dirOf(l.path)}`),
+      ...inv.unsupported.map((u) => `${unsupportedEco(u.kind)}\0${dirOf(u.path)}`),
+    ]);
+    const reqDirs = new Set(inv.lockfiles.filter((l) => l.kind === "requirements").map((l) => dirOf(l.path)));
+    // Next to a parsed lock of its ecosystem (1c E4: bun.lock + package-lock.json) the unsupported one is only a note.
+    const parsedNpm = new Set(inv.lockfiles.filter((l) => l.kind !== "requirements" && l.status === "ok").map((l) => dirOf(l.path)));
+    for (const u of inv.unsupported) {
+      const beside = unsupportedEco(u.kind) === "npm" ? parsedNpm.has(dirOf(u.path)) : reqDirs.has(dirOf(u.path));
+      out.push({ rule: "vulnerable-deps", kind: "unsupported_lock", severity: "medium", confidence: beside ? "info" : "review", file: u.path, line: null, value: `unsupported:${u.kind}` });
+    }
+    for (const l of inv.lockfiles) {
+      if (l.status === "ok") continue;
+      out.push({ rule: "vulnerable-deps", kind: l.status === "regenerate" ? "lock_regenerate" : "lock_unreadable", severity: "medium", confidence: "review", file: l.path, line: null, value: `${l.status}:${l.path}:${l.detail ?? ""}` });
+    }
     for (const m of inv.manifests) {
       if (m.deps.length === 0) continue;
       const dir = dirOf(m.path);
-      const covered = ancestors(dir).some((a) => lockDirs.has(a)) ||
-        (m.ecosystem === "PyPI" && inv.lockfiles.some((l) => l.kind === "requirements" && dirOf(l.path) === dir));
+      const covered = ancestors(dir).some((a) => lockDirs.has(`${m.ecosystem}\0${a}`)) || (m.ecosystem === "PyPI" && reqDirs.has(dir));
       if (!covered) out.push({ rule: "vulnerable-deps", kind: "version_unknown", severity: "medium", confidence: "review", file: m.path, line: null, value: `unlocked:${m.path}` });
     }
     for (const l of inv.lockfiles) {
       if (l.kind === "requirements" && l.packages.some((p) => p.version === null)) {
-        out.push({ rule: "vulnerable-deps", kind: "version_unknown", severity: "medium", confidence: "review", file: l.path, line: null, value: `unpinned:${l.path}` });
+        out.push({ rule: "vulnerable-deps", kind: "version_unpinned", severity: "medium", confidence: "review", file: l.path, line: null, value: `unpinned:${l.path}` });
       }
     }
   }
@@ -155,7 +187,7 @@ export async function depsBuiltins(ctx: BuiltinCtx, d: DepsInput): Promise<DepsO
     vuln = "timeout_partial";
   } else if (versioned.length) {
     const r = await osvQueryBatch(net.http, versioned.map((t) => ({ ecosystem: t.ecosystem, name: t.name, version: t.version! })));
-    if (r.offline || r.results.some((x) => x === null)) vuln = "offline";
+    if (r.offline || r.results.some((x) => x === null)) vuln = late(net) ? "timeout_partial" : "offline";
     r.results.forEach((ids, i) => ids && ids.length && vulnsByTarget.set(i, ids));
   }
 
@@ -198,7 +230,7 @@ export async function depsBuiltins(ctx: BuiltinCtx, d: DepsInput): Promise<DepsO
         fromVulnIntel: true,
       });
     }
-    enriching = net ? enrich(pkgs, net, d.now) : Promise.resolve();
+    if (net) enriching = Promise.all([enrich(pkgs, net, d.now), verifyFixes(pkgs, net, d.now)]).then(() => undefined);
     vulnPkgs = pkgs;
   } else if (d.vuln && net && vulnsByTarget.size) {
     const pkgs: VulnPkg[] = [];
@@ -206,22 +238,12 @@ export async function depsBuiltins(ctx: BuiltinCtx, d: DepsInput): Promise<DepsO
       const real = ids.filter((v) => !v.id.startsWith("MAL-"));
       if (real.length) pkgs.push({ t: versioned[i]!, ids: real, vulns: [] });
     }
-    const all = pkgs.flatMap((p) => p.ids);
-    const details = new Map<string, Detail | null>();
-    await mapLimit([...new Map(all.map((v) => [v.id, v])).values()], 8, async (v) => {
-      const key = v.id;
-      if (late(net)) return; // left for the next scan (cards keep their ids, severity may be unknown)
-      const cached = net.caches.osv.get<Detail>(key, 7 * DAY, d.now);
-      if (cached?.ranges && cached.modified === v.modified) return void details.set(key, { ...cached }); // copy: priority data must not leak into the 7-day cache
-      const raw = await osvVuln(net.http, v.id);
-      const det = raw ? { ...toDetail(raw), modified: v.modified || raw.modified || "" } : null;
-      if (det) net.caches.osv.set(key, { ...det }, d.now);
-      details.set(key, det);
-    });
+    const details = await osvDetails(pkgs.flatMap((p) => p.ids), net, d.now);
     for (const p of pkgs) p.vulns = p.ids.map((v) => details.get(v.id)).filter((x): x is Detail => !!x);
     if (pkgs.some((p) => p.vulns.length < p.ids.length) && late(net) && !vuln) vuln = "timeout_partial";
 
-    enriching = enrich(pkgs, net, d.now); // runs while the registry phase below runs (different hosts)
+    // Both run while the registry phase below runs (different hosts).
+    enriching = Promise.all([enrich(pkgs, net, d.now), verifyFixes(pkgs, net, d.now)]).then(() => undefined);
     vulnPkgs = pkgs;
   }
 
@@ -258,6 +280,10 @@ export async function depsBuiltins(ctx: BuiltinCtx, d: DepsInput): Promise<DepsO
           for (const [v, m] of Object.entries(a.body?.versions ?? {})) if (m?.hasInstallScript) scripts[v] = true;
           r = { s: a.s, latest: a.body?.["dist-tags"]?.latest, scripts };
         } else r = { s: await pypiExists(net.http, name), scripts: {} };
+        if ((r.s === "offline" || r.s === "error") && late(net)) {
+          partial = true; // cut off by the deadline, not a real failure
+          return;
+        }
         if (r.s === "offline") offline = true;
         if (r.s === "ok" || r.s === "missing") net.caches.registry.set(key, r, d.now);
         reg.set(key, r);
@@ -362,13 +388,75 @@ async function enrich(pkgs: VulnPkg[], net: NetCtx, now: number): Promise<void> 
       v.vi = { kev: r.value.is_kev, vpi: r.value.vpi_level, epss: r.value.epss, cvss: r.value.cvss };
       net.caches.vi.set(key, v.vi, now);
     } else if (r.reason === "not_found") net.caches.vi.set(key, null, now);
-    else if (r.reason === "budget") p.pending = true;
+    else if (r.reason === "budget" || late(net)) p.pending = true;
     else {
       p.failed = true;
       if (r.reason === "rate_limited" || r.reason === "offline") stop = true;
     }
   }
 }
+
+/** OSV details by id (7-day cache keyed by `modified`); ids not fetched before the deadline are missing. */
+async function osvDetails(ids: { id: string; modified: string }[], net: NetCtx, now: number): Promise<Map<string, Detail | null>> {
+  const details = new Map<string, Detail | null>();
+  await mapLimit([...new Map(ids.map((v) => [v.id, v])).values()], 8, async (v) => {
+    if (late(net)) return; // left for the next scan (cards keep their ids, severity may be unknown)
+    const cached = net.caches.osv.get<Detail>(v.id, 7 * DAY, now);
+    if (cached?.ranges && cached.modified === v.modified) return void details.set(v.id, { ...cached }); // copy: priority data must not leak into the 7-day cache
+    const raw = await osvVuln(net.http, v.id);
+    const det = raw ? { ...toDetail(raw), modified: v.modified || raw.modified || "" } : null;
+    if (det) net.caches.osv.set(v.id, { ...det }, now);
+    details.set(v.id, det);
+  });
+  return details;
+}
+
+/**
+ * B1: the suggested fixed version must itself be free of the package's known vulnerabilities —
+ * including ones introduced after the current version, which the current version's vulns do not
+ * show. Every candidate that escapes the known ranges is asked to OSV (querybatch, 24 h cache);
+ * vulns found on a candidate join the range check and may bring newer candidates, for a few rounds.
+ * A pick that was not asked by then (offline, deadline, round cap) shows as "fix_unverified".
+ */
+async function verifyFixes(pkgs: VulnPkg[], net: NetCtx, now: number): Promise<void> {
+  for (const p of pkgs) {
+    p.asked = new Map();
+    p.other = [];
+  }
+  type Ask = { p: VulnPkg; c: string; ids?: { id: string; modified: string }[] | undefined };
+  const cacheKey = (a: Ask): string => `fix:${pkgKey(a.p.t.ecosystem, a.p.t.name)}@${a.c}`;
+  for (let round = 0; round < FIX_ROUNDS && net.osv && !late(net); round++) {
+    const ask: Ask[] = pkgs.flatMap((p) => fixCandidates(p).filter((c) => !p.asked!.has(c)).map((c) => ({ p, c })));
+    if (!ask.length) return;
+    for (const a of ask) a.ids = net.caches.osv.get(cacheKey(a), DAY, now);
+    const need = ask.filter((a) => !a.ids);
+    let failed = false;
+    if (need.length) {
+      const r = await osvQueryBatch(net.http, need.map((a) => ({ ecosystem: a.p.t.ecosystem, name: a.p.t.name, version: a.c })));
+      r.results.forEach((ids, i) => {
+        if (!ids) return void (failed = true);
+        need[i]!.ids = ids;
+        net.caches.osv.set(cacheKey(need[i]!), ids, now);
+      });
+    }
+    // MAL- on a candidate makes it dirty; its details are never fetched (§8-1).
+    const fresh = ask.flatMap((a) => (a.ids ?? []).filter((v) => !v.id.startsWith("MAL-") && !knownIds(a.p).has(v.id)));
+    const details = await osvDetails(fresh, net, now);
+    for (const a of ask) {
+      if (!a.ids) continue;
+      a.p.asked!.set(a.c, a.ids.length === 0);
+      for (const v of a.ids) {
+        const det = details.get(v.id);
+        if (det && !knownIds(a.p).has(v.id)) a.p.other!.push(det);
+      }
+    }
+    if (failed) return;
+  }
+}
+
+const knownIds = (p: VulnPkg): Set<string> => new Set([...p.vulns, ...(p.other ?? [])].map((v) => v.id));
+const fixCandidates = (p: VulnPkg): string[] => safeFixes([...p.vulns, ...(p.other ?? [])], pkgKey(p.t.ecosystem, p.t.name), p.t.version!);
+const unsupportedEco = (kind: string): "npm" | "PyPI" => (/^(poetry|uv|pipenv)$/.test(kind) ? "PyPI" : "npm");
 
 interface Reg {
   s: Exists;
@@ -416,6 +504,10 @@ interface VulnPkg {
   /** VulnIntel reported only unknown_vulnerabilities (version could not be judged) → review. */
   unknownOnly?: boolean;
   fromVulnIntel?: boolean;
+  /** B1: vulns found on candidate fixed versions (not on the current one) — only for choosing the fix. */
+  other?: Detail[];
+  /** B1: candidate fixed version → OSV says it has no known vulnerability (true) / has some (false). */
+  asked?: Map<string, boolean>;
 }
 
 const pkgKey = (eco: string, name: string): string => `${eco}:${eco === "PyPI" ? normalizePyName(name) : name}`;
@@ -474,8 +566,10 @@ function vulnFinding(p: VulnPkg): BF {
   if (t.dev) notes.push("dev_dependency");
   if (p.pending) notes.push("priority_pending");
   if (p.failed) notes.push("priority_failed");
-  const fix = safeFix(p.vulns, pkgKey(t.ecosystem, t.name), t.version!);
+  // B1: candidates OSV reported vulnerable are out; a pick OSV was not asked about is marked.
+  const fix = pickFix(fixCandidates(p).filter((c) => p.asked?.get(c) !== false), t.version!);
   if (fix && major(fix) !== major(t.version!)) notes.push("major_upgrade");
+  if (fix && p.asked?.get(fix) !== true) notes.push("fix_unverified");
   const ids = [...new Set(p.ids.map((v) => v.id).concat(p.vulns.flatMap((v) => v.aliases.filter((a) => a.startsWith("CVE-")))))].sort();
   const max = (xs: (number | null | undefined)[]): number | undefined => {
     const n = xs.filter((x): x is number => typeof x === "number");
@@ -515,8 +609,16 @@ function vulnFinding(p: VulnPkg): BF {
  * results) fall back to "at least that vuln's own smallest fix".
  */
 export function safeFix(vulns: Pick<Detail, "fixed" | "ranges">[], key: string, cur: string): string | undefined {
+  return pickFix(safeFixes(vulns, key, cur), cur);
+}
+
+/** Same major first, else the smallest (= the next major's minimum). */
+const pickFix = (xs: string[], cur: string): string | undefined => xs.find((f) => major(f) === major(cur)) ?? xs[0];
+
+/** Every fixed version above `cur` that escapes all known ranges, ascending (safeFix candidates). */
+function safeFixes(vulns: Pick<Detail, "fixed" | "ranges">[], key: string, cur: string): string[] {
   const above = (v: Pick<Detail, "fixed">): string[] => (v.fixed[key] ?? []).filter((f) => cmpVersion(f, cur) > 0).sort(cmpVersion);
-  const pick = (xs: string[]): string | undefined => xs.find((f) => major(f) === major(cur)) ?? xs[0];
+  const pick = (xs: string[]): string | undefined => pickFix(xs, cur);
   const hits = (v: Pick<Detail, "fixed" | "ranges">, c: string): boolean => {
     const r = v.ranges?.[key];
     if (!r) {
@@ -526,7 +628,7 @@ export function safeFix(vulns: Pick<Detail, "fixed" | "ranges">[], key: string, 
     return r.some((x) => cmpVersion(c, x.introduced) >= 0 && (x.fixed ? cmpVersion(c, x.fixed) < 0 : x.last_affected ? cmpVersion(c, x.last_affected) <= 0 : true));
   };
   const cands = [...new Set(vulns.flatMap(above))].sort(cmpVersion);
-  return pick(cands.filter((c) => !vulns.some((v) => hits(v, c))));
+  return cands.filter((c) => !vulns.some((v) => hits(v, c)));
 }
 
 const pkgFields = (t:LookupScope["targets"][number]): { ecosystem: "npm" | "PyPI"; package: string; version: string | null; lockfile: string } => ({

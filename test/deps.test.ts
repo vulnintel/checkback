@@ -205,6 +205,27 @@ describe("AC16 external lookup scope (§7-2) — data side; request interception
     );
     expect(names(s)).toEqual(["PyPI:black@-", "PyPI:fastapi@-", "PyPI:flask@-", "PyPI:my-lib@-", "PyPI:pytest@-"]);
   });
+
+  it("B7: same-repo packages are never looked up — uv workspace / path / git sources, project names, requirements file: refs, pnpm catalog aliases", async () => {
+    const s = lookupScope(
+      await readInventory(
+        project({
+          "api/pyproject.toml": [
+            '[project]\nname = "dify-api"\ndependencies = ["flask>=3", "dify-vdb-pg", "Dify_Trace_X", "dify-agent", "flask-restx", "dify-sibling"]',
+            '[tool.uv.workspace]\nmembers = ["providers/*"]',
+            '[tool.uv.sources]\ndify-vdb-pg = { workspace = true }\ndify-agent = { path = "../dify-agent", editable = true }\nflask-restx = { git = "https://github.com/x/flask-restx" }\n',
+          ].join("\n"),
+          "api/providers/trace-x/pyproject.toml": '[project]\nname = "dify-trace-x"\ndependencies = ["requests"]\n',
+          "sibling/pyproject.toml": '[project]\nname = "dify_sibling"\n',
+          "tools/requirements.txt": "-e ./localpkg\nfile:../other\nrich==13.0.0\n",
+          "pnpm-workspace.yaml": "packages: ['cli']\ncatalog:\n  '@typescript/native': npm:typescript@7.1.0-beta\n  vite: 6.0.0\ncatalogs:\n  legacy:\n    react: 17.0.2\n",
+          "cli/package.json": JSON.stringify({ name: "cli", dependencies: { "@typescript/native": "catalog:", vite: "catalog:", react: "catalog:legacy" } }),
+        }),
+      ),
+    );
+    expect(names(s)).toEqual(["PyPI:flask@-", "PyPI:requests@-", "PyPI:rich@13.0.0", "npm:react@-", "npm:typescript@-", "npm:vite@-"]);
+    expect(s.excluded).toMatchObject({ local: 3, workspace: 2 });
+  });
 });
 
 describe("CycloneDX SBOM (§7-5, §8-3)", () => {
