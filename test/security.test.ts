@@ -91,6 +91,14 @@ describe("audit #2: .next/static that is a link or junction is not walked", () =
     const dir = project({ ".next/static/chunks/a.js": "x" });
     expect((await collectFiles(dir)).map((f) => [f.rel, f.build])).toEqual([[".next/static/chunks/a.js", true]]);
   });
+
+  it("still walks .next/static when the project root itself is reached through a link", async () => {
+    // macOS tmp (/var → /private/var) and Windows short names (RUNNER~1) put the root behind a link.
+    const dir = project({ ".next/static/chunks/a.js": "x" });
+    const viaLink = join(tempDir(), "linked-root");
+    symlinkSync(dir, viaLink, process.platform === "win32" ? "junction" : "dir");
+    expect((await collectFiles(viaLink)).map((f) => [f.rel, f.build])).toEqual([[".next/static/chunks/a.js", true]]);
+  });
 });
 
 describe("audit #3/#11: builtin regexes stay linear on hostile input", () => {

@@ -26,7 +26,7 @@ export const MAX_FILE_BYTES = 2 * 1024 * 1024;
 export const MAX_LINE_CHARS = 1024 * 1024;
 
 /**
- * Walk `root` (already realpath'd). Symlinks and junctions are never followed: links that
+ * Walk `root`. Symlinks and junctions are never followed: links that
  * point outside CWD must not be read, and links inside CWD reach files we walk anyway.
  * Skipped: other checkouts inside the tree (a `.git` file marks a nested worktree or submodule;
  * `.claude/worktrees` is Claude Code's worktree folder) and gitignored untracked paths — except
@@ -74,8 +74,10 @@ async function isPlainDirInside(abs: string, root: string): Promise<boolean> {
   try {
     const st = await lstat(abs);
     if (st.isSymbolicLink() || !st.isDirectory()) return false;
-    // Catches reparse points Node doesn't report as links.
-    return (await realpath(abs)).startsWith(root.endsWith(sep) ? root : root + sep);
+    // Catches reparse points Node doesn't report as links. Resolve root too: it may itself sit behind
+    // a symlink or short name (macOS /var → /private/var, Windows RUNNER~1), which made this always false.
+    const real = await realpath(root);
+    return (await realpath(abs)).startsWith(real.endsWith(sep) ? real : real + sep);
   } catch {
     return false;
   }
