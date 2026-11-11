@@ -93,6 +93,14 @@ const RULE_CASES: Record<string, Case[]> = {
       }),
       expect: [],
     },
+    {
+      name: "Markdown docs and specs are not checked (the example line of a spec)",
+      files: () => ({
+        "sio/projects/spec.md": "- AC8: `NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY=x` → high, `import.meta.env.VITE_SPOTIFY_CLIENT_SECRET` → review\n",
+        "notes.mdx": "NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY=x\n",
+      }),
+      expect: [],
+    },
   ],
   "secret-in-mcp-config": [
     { name: "key value in .mcp.json", files: () => ({ ".mcp.json": `{"mcpServers":{"x":{"env":{"API_KEY":"${rnd(24)}"}}}}` }), expect: [c("high", "confirmed")] },
@@ -132,10 +140,52 @@ const RULE_CASES: Record<string, Case[]> = {
   ],
   "cors-credentials-any": [
     { name: "origin true + credentials", files: () => ({ "server.js": "app.use(cors({ origin: true, credentials: true }));" }), expect: [c("high", "confirmed")] },
+    { name: "origin '*' + credentials", files: () => ({ "server.js": "app.use(cors({ origin: '*', credentials: true }));" }), expect: [c("high", "confirmed")] },
     {
-      name: "variable origins + credentials (AC24)",
-      files: () => ({ "main.py": "app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=True)" }),
-      expect: [c("high", "review")],
+      name: "FastAPI allow_origins=['*'] + allow_credentials",
+      files: () => ({ "main.py": 'app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True)' }),
+      expect: [c("high", "confirmed")],
+    },
+    {
+      name: "all-origins regex + credentials (FastAPI, Express)",
+      files: () => ({
+        "main.py": 'app.add_middleware(CORSMiddleware, allow_origin_regex="https?://.*", allow_credentials=True)',
+        "server.js": "app.use(cors({ origin: /.*/, credentials: true }));",
+      }),
+      expect: [c("high", "confirmed"), c("high", "confirmed")],
+    },
+    {
+      name: "origin callback that always says yes + credentials",
+      files: () => ({ "server.js": "app.use(cors({ origin: (o, cb) => cb(null, true), credentials: true }));" }),
+      expect: [c("high", "confirmed")],
+    },
+    {
+      name: "request Origin header copied into Allow-Origin + credentials (Express, Python)",
+      files: () => ({
+        "api/x.js": "res.setHeader('Access-Control-Allow-Origin', req.headers.origin);\nres.setHeader('Access-Control-Allow-Credentials', 'true');",
+        "app/mw.py": 'response.headers["Access-Control-Allow-Origin"] = request.headers.get("origin")\nresponse.headers["Access-Control-Allow-Credentials"] = "true"\n',
+      }),
+      expect: [c("high", "confirmed"), c("high", "confirmed")],
+    },
+    {
+      name: "settings variable + credentials is not 'any origin' (VulnIntel middleware.py)",
+      files: () => ({ "main.py": "app.add_middleware(\n    CORSMiddleware,\n    allow_origins=settings.ALLOWED_ORIGINS,\n    allow_credentials=True,\n)" }),
+      expect: [],
+    },
+    {
+      name: "explicit origin list + credentials",
+      files: () => ({
+        "main.py": 'app.add_middleware(CORSMiddleware, allow_origins=["https://a.com", "https://b.com"], allow_credentials=True)',
+        "server.js": "app.use(cors({ origin: ['https://a.com'], credentials: true }));",
+      }),
+      expect: [],
+    },
+    {
+      name: "allowlist callback + credentials (Express docs pattern)",
+      files: () => ({
+        "server.js": "app.use(cors({ credentials: true, origin: function (origin, callback) {\n  if (allowlist.indexOf(origin) !== -1) { callback(null, true) } else { callback(new Error('no')) }\n} }));",
+      }),
+      expect: [],
     },
     { name: "origin true without credentials", files: () => ({ "server.js": "app.use(cors({ origin: true }));" }), expect: [] },
   ],

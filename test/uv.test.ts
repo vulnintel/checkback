@@ -168,13 +168,41 @@ describe("vulnerable-deps with uv.lock", () => {
     const r = await scanDefault(project(simpleFiles()), { appDir: await consentedAppDir({ vulnintel: false, registry: false }), fetch: jinjaNet().fetch, now: () => NOW });
     const tpl = await loadDefaultTemplate();
     const f = byRule(r, "vulnerable-deps")[0]!;
+    expect(f.dependency).toEqual({ direct: true, manifest: "pyproject.toml", section: "project.dependencies" });
     const ko = fixPromptText([f], tpl, "ko").text;
     expect(ko).toContain('`uv add "jinja2>=2.10.1"`');
-    expect(ko).toContain("`uv lock --upgrade-package jinja2`");
+    expect(ko).not.toContain("upgrade-package");
     expect(ko).toContain("lock 파일을 손으로 고치지 마세요");
-    expect(fixPromptText([f], tpl, "en").text).toContain("pyproject.toml already declares the package");
+    expect(fixPromptText([f], tpl, "en").text).toContain("pyproject.toml declares it directly in project.dependencies");
     // The generic package-manager sentence is replaced, not repeated.
     expect(ko).not.toContain("패키지 매니저 명령으로");
+    // A stored finding from before the declaration was recorded keeps the conditional uv sentence.
+    const { dependency: _d, ...old } = f;
+    expect(fixPromptText([old], tpl, "ko").text).toContain("`uv lock --upgrade-package jinja2`");
+  });
+
+  it("uv add flag follows the declaring section: dev group → --dev, other group → --group, extra → --optional, [tool.uv] dev-dependencies → --dev; transitive → uv lock --upgrade-package", async () => {
+    const ADV = (name: string, fixed: string): object => ({ id: `GHSA-${name}`, aliases: [], database_specific: { severity: "HIGH" }, affected: [{ package: { ecosystem: "PyPI", name }, ranges: [{ type: "ECOSYSTEM", events: [{ introduced: "0" }, { fixed }] }] }] });
+    const net = mockNet({
+      osv: { "PyPI:iniconfig@2.0.0": ["GHSA-iniconfig"], "PyPI:click@8.0.0": ["GHSA-click"], "PyPI:markupsafe@3.0.4": ["GHSA-markupsafe"] },
+      vulns: { "GHSA-iniconfig": ADV("iniconfig", "2.0.1"), "GHSA-click": ADV("click", "8.0.1"), "GHSA-markupsafe": ADV("markupsafe", "3.0.5") },
+    });
+    const appDir = await consentedAppDir({ vulnintel: false, registry: false });
+    const tpl = await loadDefaultTemplate();
+    const run = async (pyproject: string): Promise<Record<string, string>> => {
+      const r = await scanDefault(project({ "pyproject.toml": pyproject, "uv.lock": fx("uv-simple/uv.lock") }), { appDir, fetch: net.fetch, now: () => NOW });
+      return Object.fromEntries(byRule(r, "vulnerable-deps").map((f) => [f.package!, fixPromptText([f], tpl, "ko").text]));
+    };
+    const py = fx("uv-simple/pyproject.toml");
+    let p = await run(py);
+    expect(p.iniconfig).toContain('`uv add --dev "iniconfig>=2.0.1"`');
+    expect(p.click).toContain('`uv add --optional cli "click>=8.0.1"`');
+    expect(p.markupsafe).toContain("다른 패키지를 통해 들어온 패키지입니다. `uv lock --upgrade-package markupsafe`");
+    expect(p.markupsafe).not.toContain("uv add");
+    p = await run(py.replace(/\[dependency-groups\]\r?\ndev =/, "[dependency-groups]\nlint ="));
+    expect(p.iniconfig).toContain('`uv add --group lint "iniconfig>=2.0.1"`');
+    p = await run(py.replace(/\[dependency-groups\]\r?\ndev =/, "[tool.uv]\ndev-dependencies ="));
+    expect(p.iniconfig).toContain('`uv add --dev "iniconfig>=2.0.1"`');
   });
 });
 

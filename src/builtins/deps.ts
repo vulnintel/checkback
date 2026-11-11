@@ -10,7 +10,7 @@ import { osvQueryBatch, osvVuln, type OsvVuln } from "../net/osv.js";
 import { npmAbbrev, npmCreated, npmWeeklyDownloads, pypiExists, type Exists } from "../net/registry.js";
 import { publicLookup } from "../net/vulnintel.js";
 import { viScan, type ViPackage, type ViScanStatus } from "./vi-scan.js";
-import type { CheckedRule, Lang, NoteCode, Severity } from "../types.js";
+import type { CheckedRule, Finding, Lang, NoteCode, Severity } from "../types.js";
 import { cmpVersion, cvss3Score, major } from "../versions.js";
 import type { BF, BuiltinCtx } from "./backend.js";
 import type { ImportRef } from "./imports.js";
@@ -348,7 +348,7 @@ export async function depsBuiltins(ctx: BuiltinCtx, d: DepsInput): Promise<DepsO
     }
   }
   await enriching;
-  for (const p of vulnPkgs) out.push(vulnFinding(p));
+  for (const p of vulnPkgs) out.push(vulnFinding(p, inv));
   return { findings: out, vuln, hall, ...(viStatus && { vulnintel: viStatus }) };
 }
 
@@ -567,7 +567,7 @@ function vulnSeverity(v: Detail): { sev: Severity; known: boolean } {
 const baseSeverity = (p: VulnPkg): Severity => p.vulns.map((v) => vulnSeverity({ ...v, vi: undefined, kev: undefined }).sev).sort((a, b) => sevRank(a) - sevRank(b))[0] ?? "medium";
 const topCvss = (p: VulnPkg): number => Math.max(0, ...p.vulns.map((v) => v.cvss ?? 0));
 
-function vulnFinding(p: VulnPkg): BF {
+function vulnFinding(p: VulnPkg, inv: Inventory): BF {
   const { t } = p;
   const notes: NoteCode[] = [];
   // N4: the §7-3 VPI mapping applies once every ID of the package has its priority. Until then the
@@ -593,6 +593,7 @@ function vulnFinding(p: VulnPkg): BF {
   const vpi = done ? max(p.vulns.map((v) => v.vi?.vpi)) : undefined;
   const epss = done ? max(p.vulns.map((v) => v.vi?.epss)) : undefined;
   const cvss = max(p.vulns.map((v) => v.cvss ?? (done ? v.vi?.cvss : undefined)));
+  const dependency = dependencyOf(inv, t);
   return {
     rule: "vulnerable-deps",
     kind: fix ? "vulnerable" : "vulnerable_no_fix",
@@ -612,8 +613,32 @@ function vulnFinding(p: VulnPkg): BF {
       ...(cvss !== undefined && { cvss }),
       source: p.fromVulnIntel || p.vulns.some((v) => v.vi) ? "vulnintel" : "osv",
       ...(t.sources.length > 1 && { related: t.sources }),
+      ...(dependency && { dependency }),
     },
   };
+}
+
+/**
+ * §6-3 fix command input: how the package reaches the project according to its lock (not for
+ * requirements files) — direct (with the declaring manifest at or below the lock's folder and its
+ * section) or through another package — and whether the lock holds another major line of it.
+ */
+function dependencyOf(inv: Inventory, t: LookupScope["targets"][number]): Finding["dependency"] | undefined {
+  const lock = inv.lockfiles.find((l) => l.path === t.sources[0] && l.kind !== "requirements" && l.status === "ok");
+  if (!lock || t.version === null) return undefined;
+  const same = lock.packages.filter((p) => p.name === t.name && p.version !== null);
+  const other_majors = same.some((p) => major(p.version!) !== major(t.version!));
+  const eco = lockEco(lock.kind);
+  const dir = dirOf(lock.path);
+  const direct = !!same.find((p) => p.version === t.version)?.direct;
+  // The lock's own folder first, then workspace members below it; no declaring manifest found → no command named.
+  const decl = direct
+    ? inv.manifests
+        .filter((m) => m.ecosystem === eco && (dir === "" || m.path.startsWith(`${dir}/`)))
+        .sort((a, b) => a.path.split("/").length - b.path.split("/").length)
+        .flatMap((m) => m.deps.filter((d) => (eco === "PyPI" ? normalizePyName(d.name) : d.name) === t.name).map((d) => ({ manifest: m.path, section: d.section })))[0]
+    : undefined;
+  return { direct, ...decl, ...(other_majors && { other_majors }) };
 }
 
 /**

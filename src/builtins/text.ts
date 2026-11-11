@@ -23,6 +23,57 @@ const UV_RULE = {
   en: 'This is a uv project. If pyproject.toml already declares the package, raise its lower bound with `uv add "{package}>={fixed_version}"`; if it comes in through another package, run `uv lock --upgrade-package {package}` to regenerate uv.lock. Do not edit the lock file by hand.',
 };
 
+/**
+ * §6-3 dependency fix sentences chosen by the prompt generator from the lock's package manager and
+ * how the package is declared (Finding.dependency). Commands only bump a package the manifest already
+ * declares; a transitive package gets "upgrade the parent, else an override floor". {cmd} {manifest}
+ * {section} {sel} {major} {why} {overrides} {install} are filled by the generator, never from free text.
+ */
+export const DEP_FIX = {
+  upgrade: {
+    ko: "{package}를 {fixed_version} 이상으로 올리세요(취약점: {vuln_ids}, lock: {lockfile}).",
+    en: "Upgrade {package} to {fixed_version} or later (vulnerabilities: {vuln_ids}, lock: {lockfile}).",
+  },
+  direct: {
+    ko: "{manifest}의 {section}에 직접 선언된 패키지입니다. `{cmd}`로 버전을 올려 lock을 다시 만드세요. lock 파일을 손으로 고치지 마세요.",
+    en: "{manifest} declares it directly in {section}. Raise it with `{cmd}` so the lock file is regenerated. Do not edit the lock file by hand.",
+  },
+  memberDir: { ko: "명령은 {manifest}가 있는 폴더에서 실행하세요.", en: "Run the command in the folder that holds {manifest}." },
+  uvTransitive: {
+    ko: "다른 패키지를 통해 들어온 패키지입니다. `uv lock --upgrade-package {package}`로 uv.lock을 다시 만드세요. lock 파일을 손으로 고치지 마세요.",
+    en: "It comes in through another package. Run `uv lock --upgrade-package {package}` to regenerate uv.lock. Do not edit the lock file by hand.",
+  },
+  npmTransitive: {
+    ko: 'package.json에 직접 선언되지 않고 다른 패키지를 통해 들어온 패키지입니다. 먼저 `{why}`로 이 패키지를 끌어온 상위 패키지를 찾아 그 상위 패키지를 올리세요. 그래도 {package} {major}.x가 {fixed_version} 미만으로 남으면 package.json의 `{overrides}`에 `"{sel}": "^{fixed_version}"`을 넣어 하한을 정하고 `{install}`로 lock을 다시 만드세요. lock 파일을 손으로 고치지 마세요.',
+    en: 'package.json does not declare it; it comes in through another package. First find the parent package with `{why}` and upgrade that parent. If {package} {major}.x still stays below {fixed_version}, set a floor with `"{sel}": "^{fixed_version}"` under `{overrides}` in package.json and run `{install}` to regenerate the lock file. Do not edit the lock file by hand.',
+  },
+  // Fixed version is in a later major: an override would force that major on parents that ask for this one.
+  npmTransitiveMajor: {
+    ko: "package.json에 직접 선언되지 않고 다른 패키지를 통해 들어온 패키지입니다. {major}.x 계열에는 수정 버전이 없습니다. `{why}`로 이 패키지를 끌어온 상위 패키지를 찾아, {package} {fixed_major}.x 이상을 쓰는 버전으로 올리거나 교체하세요. 메이저 버전을 overrides로 강제하면 상위 패키지가 깨질 수 있습니다. 상위 패키지를 올린 뒤 `{install}`로 lock을 다시 만드세요. lock 파일을 손으로 고치지 마세요.",
+    en: "package.json does not declare it; it comes in through another package. The {major}.x line has no fixed version. Find the parent package with `{why}` and upgrade or replace it with a version that uses {package} {fixed_major}.x or later. Forcing a major version through overrides can break the parent package. After upgrading the parent, run `{install}` to regenerate the lock file. Do not edit the lock file by hand.",
+  },
+  majorChange: {
+    ko: "메이저 버전이 바뀌므로 변경 내역(breaking changes)을 확인하세요.",
+    en: "This changes the major version, so check its breaking changes.",
+  },
+  otherMajorsNoFix: {
+    ko: "이 lock에는 {package}의 다른 메이저 버전도 있습니다. 이 항목은 {major}.x 계열에 대한 것이며, 그 계열에는 수정 버전이 없습니다.",
+    en: "This lock also holds another major version of {package}. This item is about the {major}.x line, which has no fixed version.",
+  },
+  otherMajors: {
+    ko: "이 lock에는 {package}의 다른 메이저 버전도 있습니다. 이 항목은 {major}.x 계열에만 해당하니 그 계열의 하한만 올리세요.",
+    en: "This lock also holds another major version of {package}. This item is about the {major}.x line only, so raise the floor of that line only.",
+  },
+  requirements: {
+    ko: "{package}를 {fixed_version} 이상으로 올리세요(취약점: {vuln_ids}, 파일: {lockfile}). {lockfile}에서 {package}의 버전 지정을 {fixed_version} 이상으로 고치세요. pip-compile·uv export 같은 도구가 만든 파일이면 원본(.in 파일이나 pyproject.toml)을 고친 뒤 그 도구로 다시 만드세요.",
+    en: "Upgrade {package} to {fixed_version} or later (vulnerabilities: {vuln_ids}, file: {lockfile}). Change the version of {package} in {lockfile} to {fixed_version} or later. If a tool such as pip-compile or uv export writes this file, change its source (.in file or pyproject.toml) and regenerate it with that tool.",
+  },
+  requirementsNoFix: {
+    ko: "수정 버전 없음 — {package} 사용 중단을 검토하세요(취약점: {vuln_ids}, 파일: {lockfile}). 그만 쓰기로 하면 {lockfile}에서 지우세요.",
+    en: "No fixed version — consider stopping use of {package} (vulnerabilities: {vuln_ids}, file: {lockfile}). If you stop using it, remove it from {lockfile}.",
+  },
+} satisfies Record<string, LocalizedText>;
+
 export const BUILTIN_NAMES: Record<string, LocalizedText> = {
   "supabase-rls": { ko: "Supabase 접근 규칙", en: "Supabase access rules" },
   "firebase-rules": { ko: "Firebase 보안 규칙", en: "Firebase security rules" },

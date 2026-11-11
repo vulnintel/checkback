@@ -23,6 +23,8 @@ export interface ManifestDep {
   /** Declared spec; local/workspace/git specs are kept so callers can see why a name is excluded. */
   spec: string;
   dev: boolean;
+  /** Where it is declared: `dependencies`, `devDependencies`, `project.dependencies`, `dependency-groups.<g>`, `project.optional-dependencies.<extra>`, ... */
+  section: string;
 }
 
 export interface Manifest {
@@ -189,7 +191,7 @@ export async function readInventory(cwd: string, files?: FileEntry[], env: NodeJ
         if (!isObj(d)) continue;
         const deps: ManifestDep[] = [];
         for (const [sect, dev] of [["dependencies", false], ["optionalDependencies", false], ["devDependencies", true]] as const) {
-          if (isObj(d[sect])) for (const [name, spec] of Object.entries(d[sect])) deps.push({ name, spec: catalogSpec(name, String(spec)), dev });
+          if (isObj(d[sect])) for (const [name, spec] of Object.entries(d[sect])) deps.push({ name, spec: catalogSpec(name, String(spec)), dev, section: sect });
         }
         inv.manifests.push({ path: f.rel, ecosystem: "npm", ...(typeof d.name === "string" && { name: d.name }), deps });
       } catch {
@@ -316,33 +318,33 @@ async function userRegistryConfig(env: NodeJS.ProcessEnv, sink: UserConfigSinks)
 
 function pythonDeps(file: string, d: Obj): ManifestDep[] {
   const out: ManifestDep[] = [];
-  const pep508 = (s: unknown, dev: boolean): void => {
+  const pep508 = (s: unknown, dev: boolean, section: string): void => {
     const m = typeof s === "string" ? /^\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*(\[[^\]]*\])?\s*(.*)$/.exec(s) : null;
-    if (m) out.push({ name: normalizePyName(m[1]!), spec: m[3]!.trim(), dev });
+    if (m) out.push({ name: normalizePyName(m[1]!), spec: m[3]!.trim(), dev, section });
   };
-  const table = (t: unknown, dev: boolean): void => {
+  const table = (t: unknown, dev: boolean, section: string): void => {
     if (isObj(t)) {
       for (const [n, v] of Object.entries(t)) {
-        if (n.toLowerCase() !== "python") out.push({ name: normalizePyName(n), spec: typeof v === "string" ? v : isObj(v) && (v.path || v.git || v.url) ? "local:" : "", dev });
+        if (n.toLowerCase() !== "python") out.push({ name: normalizePyName(n), spec: typeof v === "string" ? v : isObj(v) && (v.path || v.git || v.url) ? "local:" : "", dev, section });
       }
     }
   };
   if (file === "Pipfile") {
-    table(d.packages, false);
-    table(d["dev-packages"], true);
+    table(d.packages, false, "packages");
+    table(d["dev-packages"], true, "dev-packages");
     return out;
   }
   const project = isObj(d.project) ? d.project : {};
-  for (const s of Array.isArray(project.dependencies) ? project.dependencies : []) pep508(s, false);
-  if (isObj(project["optional-dependencies"])) for (const l of Object.values(project["optional-dependencies"])) for (const s of Array.isArray(l) ? l : []) pep508(s, false);
-  if (isObj(d["dependency-groups"])) for (const l of Object.values(d["dependency-groups"])) for (const s of Array.isArray(l) ? l : []) pep508(s, true);
+  for (const s of Array.isArray(project.dependencies) ? project.dependencies : []) pep508(s, false, "project.dependencies");
+  if (isObj(project["optional-dependencies"])) for (const [x, l] of Object.entries(project["optional-dependencies"])) for (const s of Array.isArray(l) ? l : []) pep508(s, false, `project.optional-dependencies.${x}`);
+  if (isObj(d["dependency-groups"])) for (const [g, l] of Object.entries(d["dependency-groups"])) for (const s of Array.isArray(l) ? l : []) pep508(s, true, `dependency-groups.${g}`);
   const poetry = isObj(d.tool) && isObj(d.tool.poetry) ? d.tool.poetry : {};
-  table(poetry.dependencies, false);
-  table(poetry["dev-dependencies"], true);
+  table(poetry.dependencies, false, "tool.poetry.dependencies");
+  table(poetry["dev-dependencies"], true, "tool.poetry.dev-dependencies");
   // Legacy uv dev list (uv.lock records it as the "dev" group).
   const uvTool = isObj(d.tool) && isObj(d.tool.uv) ? d.tool.uv : {};
-  for (const s of Array.isArray(uvTool["dev-dependencies"]) ? uvTool["dev-dependencies"] : []) pep508(s, true);
-  if (isObj(poetry.group)) for (const g of Object.values(poetry.group)) if (isObj(g)) table(g.dependencies, true);
+  for (const s of Array.isArray(uvTool["dev-dependencies"]) ? uvTool["dev-dependencies"] : []) pep508(s, true, "tool.uv.dev-dependencies");
+  if (isObj(poetry.group)) for (const [n, g] of Object.entries(poetry.group)) if (isObj(g)) table(g.dependencies, true, `tool.poetry.group.${n}`);
   // [tool.uv.sources] workspace / path / git / url entries are not from PyPI (B7).
   const uv = isObj(uvTool.sources) ? uvTool.sources : {};
   const local = new Set(Object.entries(uv).filter(([, v]) => [v].flat().some((s) => isObj(s) && (s.workspace === true || s.path || s.git || s.url))).map(([n]) => normalizePyName(n)));

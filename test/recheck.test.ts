@@ -187,7 +187,7 @@ describe("AC67 recheck against the fix-request snapshot", () => {
     expect(byRule(r, "vulnerable-deps").map((f) => [f.package, f.recheck])).toEqual([["axios", "remaining"]]);
   });
 
-  it("1c E3: wildcard literal → env-driven origin list: literal resolved, variable is 'new' + check manually; unchanged variable → 'remaining' + check manually", async () => {
+  it("1c E3: wildcard literal → env-driven origin list: literal resolved, the variable list is not an item", async () => {
     const appDir = tempDir();
     const app = (origins: string): string =>
       `import os\nfrom fastapi import FastAPI\nfrom fastapi.middleware.cors import CORSMiddleware\nALLOWED = [o for o in os.getenv("CORS_ORIGINS", "").split(",") if o and o != "*"]\napp = FastAPI()\napp.add_middleware(\n    CORSMiddleware,\n    allow_origins=${origins},\n    allow_credentials=True,\n)\n`;
@@ -195,16 +195,25 @@ describe("AC67 recheck against the fix-request snapshot", () => {
     const base = await baseline(dir, appDir);
     expect(byRule(base, "cors-credentials-any").map((f) => f.confidence)).toEqual(["confirmed"]); // literal wildcard still caught
     project({ "app/main.py": app("ALLOWED") }, dir);
-    let r = await rescan(dir, appDir);
-    expect(byRule(r, "cors-credentials-any")).toMatchObject([{ recheck: "new", recheck_note: "static_unverifiable", confidence: "review", notes: ["env_driven"] }]);
+    const r = await rescan(dir, appDir);
+    expect(byRule(r, "cors-credentials-any")).toEqual([]);
     expect(r.compare!.resolved.map((x) => x.rule_id)).toContain("cors-credentials-any");
-    // C finance-agent: baseline already had the variable; the fix was made where the list is built.
+  });
+
+  it("1c E3: a value set from the environment is 'new' / 'remaining' + check manually (static_unverifiable)", async () => {
+    const appDir = tempDir();
+    const dir = project({ "proj/settings.py": "DEBUG = True\n" });
+    await baseline(dir, appDir);
+    project({ "proj/settings.py": 'import os\nDEBUG = os.environ.get("DEBUG") == "1"\n' }, dir);
+    let r = await rescan(dir, appDir);
+    expect(byRule(r, "debug-django")).toMatchObject([{ recheck: "new", recheck_note: "static_unverifiable", confidence: "review", notes: ["env_driven"] }]);
+    // Baseline already had the env-driven value; the change was made elsewhere.
     const appDir2 = tempDir();
-    const dir2 = project({ "app/middleware.py": app("ALLOWED") });
+    const dir2 = project({ "proj/settings.py": 'import os\nDEBUG = os.environ.get("DEBUG") == "1"\n' });
     await baseline(dir2, appDir2);
-    project({ "app/config.py": "def origins():\n    return ['https://app.example.com']\n" }, dir2);
+    project({ "proj/env.py": "X = 1\n" }, dir2);
     r = await rescan(dir2, appDir2);
-    expect(byRule(r, "cors-credentials-any")).toMatchObject([{ recheck: "remaining", recheck_note: "static_unverifiable" }]);
+    expect(byRule(r, "debug-django")).toMatchObject([{ recheck: "remaining", recheck_note: "static_unverifiable" }]);
   });
 
   describe("1c Q3/Q4 dependency items", () => {

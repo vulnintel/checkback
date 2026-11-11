@@ -351,6 +351,7 @@ class Run {
       }
     }
     const refine = REFINERS[rule.id];
+    let notSecret = false;
     if (refine) {
       const r = refine({ file: f, text, value, index: m.index, lineText: lineTextAt(text, m.index), severity, confidence, files: this.files });
       if (!r) return;
@@ -358,13 +359,14 @@ class Run {
       confidence = lower(confidence, r.confidence);
       notes.push(...(r.notes ?? []));
       value = r.value ?? value;
+      notSecret = !!r.notSecret;
     }
     confidence = await this.adjustByPath(f.rel, confidence, secret ? (isLate ? "late" : "value") : "other", notes);
     if (secret && !isLate) occupied.add(line);
     this.add({
       ruleId: rule.id, title: this.title(rule.name, rule.id), file: f.rel, line, valueHash: this.hv(value), severity, confidence, notes, masked: mask(value),
-      // A public anon key is not a secret: no secret_kind, so no "revoke first" step or revocation check.
-      secret: secret && !notes.includes("legacy_anon_key"), build: f.build,
+      // A public anon key or a placeholder is not a secret: no secret_kind, so no "revoke first" step or revocation check.
+      secret: secret && !notSecret && !notes.includes("legacy_anon_key"), build: f.build,
     });
   }
 
@@ -624,6 +626,9 @@ class Run {
     }
     for (const b of out) {
       const t = KIND_TEXT[`${b.rule}/${b.kind}`];
+      // §5 test paths (AC10): a dependency file only under tests/fixtures (parser test input) is not what the app installs → review.
+      const testOnly = (b.rule === "vulnerable-deps" || b.rule === "hallucinated-package") && !!b.file && [b.file, ...(b.extra?.related ?? [])].every(isTestPath);
+      const confidence = testOnly ? lower(b.confidence, "review") : b.confidence;
       this.add({
         ruleId: b.rule,
         title: this.title(t?.title ?? BUILTIN_NAMES[b.rule], b.rule),
@@ -631,8 +636,8 @@ class Run {
         line: b.line,
         valueHash: this.hv(b.value),
         severity: on(b.rule)?.severity ?? b.severity,
-        confidence: b.confidence,
-        notes: b.notes ?? [],
+        confidence,
+        notes: [...(b.notes ?? []), ...(confidence !== b.confidence ? (["test_path"] as const) : [])],
         kind: b.kind,
         ...(b.extra && { extra: b.extra }),
       });

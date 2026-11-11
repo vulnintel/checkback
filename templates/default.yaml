@@ -323,15 +323,17 @@ rules:
     type: pattern
     severity: high
     files: ['**/*.{js,jsx,ts,tsx,mjs,cjs,py,java,kt,php,go,rb}']
+    # Only "any origin" with credentials: literal *, an all-origins regex, or the request Origin echoed back
+    # (origin: true, an origin callback that always says yes, the Origin header copied into Allow-Origin).
+    # A variable or an explicit list of origins is not matched.
     match:
       - '\borigin\s*:\s*true'
       - '\borigin\s*:\s*["'']\*["'']'
+      - '\borigin\s*:\s*/\^?(?:https\??:(?:\\?/){2})?\.[*+]\$?/'
       - '\ballow_origins\s*=\s*\[\s*["'']\*["'']\s*\]'
-      - '\ballow_origins\s*=\s*[A-Za-z_][A-Za-z0-9_.]*'
-      - '\b(?:callback|cb)\(\s*null\s*,\s*true\s*\)'
-      - 'Access-Control-Allow-Origin["'']?\s*[:,=]?\s*(?:req|request)\.(?:headers?\.origin|headers?\[["'']origin["'']\]|headers\.get\(["'']origin["'']\))'
-    review:
-      - '\ballow_origins\s*=\s*[A-Za-z_]'
+      - '\ballow_origin_regex\s*=\s*r?["'']\^?(?:https\??:(?:\\?/){2})?\.[*+]\$?["'']'
+      - '(?:=>\s*\{?|\bfunction\s*\w*\s*\([^)]*\)\s*\{)\s*(?:return\s+)?(?:callback|cb)\(\s*null\s*,\s*true\s*\)'
+      - 'Access-Control-Allow-Origin["'']?\]?\s*[:,=]?\s*(?:req|request|r)\.(?:headers?\.origin|headers?\[["''][oO]rigin["'']\]|(?:headers|Header)\.(?:get|Get)\(["''][oO]rigin["'']\))'
     description:
       ko: 로그인 쿠키를 포함한 요청을 아무 사이트에서나 받도록 열려 있습니다. 다른 사이트가 사용자 대신 API를 부를 수 있습니다.
       en: Requests with login cookies are accepted from any site, so another site can call your API as the user.

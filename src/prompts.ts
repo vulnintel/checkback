@@ -2,10 +2,11 @@
 // never matched values, masked values, file contents or AI output (§6-3, §10-3, H6).
 
 import { defaultAppDir } from "./appdata.js";
-import { BUILTIN_NAMES, KIND_TEXT } from "./builtins/text.js";
+import { BUILTIN_NAMES, DEP_FIX, KIND_TEXT } from "./builtins/text.js";
 import { readLastScan, recordFixRequest, type StoredFinding } from "./recheck.js";
 import { sanitizeAiText } from "./template.js";
 import type { AiCheckRule, Lang, LocalizedText, Template } from "./types.js";
+import { major } from "./versions.js";
 
 export const MAX_BATCH = 10;
 const MAX_CONFIRMED = 50;
@@ -27,6 +28,7 @@ const S = {
     done: "5) 끝나면: 변경 파일 목록과 확인 방법을 알려주세요.",
     revoke: "(사람이 직접) 발급처에서 이 키를 폐기하고 새로 발급하세요.",
     omitted: "(이름 생략)",
+    more: (n: number) => `외 ${n}개`,
     batchHead: (n: number) => `[보안 수정 요청 — ${n}개 항목]`,
     batchIntro: "아래 항목을 하나씩 고치고, 항목마다 고침/못 고침을 표로 알려주세요. 사람이 해야 하는 일은 '못 고침(사람 몫)'으로 적으세요.",
     humanFirst: "사람이 먼저 할 일:",
@@ -49,6 +51,7 @@ const S = {
     done: "5) When done: list the changed files and how to verify.",
     revoke: "(a person) Revoke this key at the provider and issue a new one.",
     omitted: "(name omitted)",
+    more: (n: number) => `and ${n} more`,
     batchHead: (n: number) => `[Security fix request — ${n} items]`,
     batchIntro: "Fix the items below one by one and report a table of fixed / not fixed per item. Mark work a person must do as 'not fixed (needs a person)'.",
     humanFirst: "A person must do first:",
@@ -96,6 +99,11 @@ function ruleName(f: StoredFinding, tpl: Template, lang: Lang): string {
 export const needsRevoke = (f: StoredFinding): boolean =>
   !!f.secret_kind || f.rule_id === "key-file-committed" || (f.rule_id === "env-committed" && !f.notes?.includes("public_values_only"));
 
+/** At most MAX_IDS vulnerability ids: a long list (an old Django pin has 100+) must not push the fix steps past the length cap. */
+const MAX_IDS = 10;
+const idList = (ids: string[], lang: Lang): string =>
+  ids.length ? ids.slice(0, MAX_IDS).join(", ") + (ids.length > MAX_IDS ? ` ${S[lang].more(ids.length - MAX_IDS)}` : "") : "-";
+
 function vars(f: StoredFinding, tpl: Template, lang: Lang): Record<string, string> {
   const ver = (v: string | null | undefined): string => (v && isSafeVersion(v) ? v : "-");
   return {
@@ -105,7 +113,7 @@ function vars(f: StoredFinding, tpl: Template, lang: Lang): Record<string, strin
     package: f.package ? safePkg(f.package, S[lang].omitted) : S[lang].omitted,
     version: ver(f.version),
     fixed_version: ver(f.fixed_version),
-    vuln_ids: (f.vuln_ids ?? []).filter(isVulnId).join(", ") || "-",
+    vuln_ids: idList((f.vuln_ids ?? []).filter(isVulnId), lang),
     lockfile: dataPath(f.lockfile ?? f.location?.file ?? "-"),
     table: "-",
     secret_kind: f.secret_kind ?? "-",
@@ -113,6 +121,57 @@ function vars(f: StoredFinding, tpl: Template, lang: Lang): Record<string, strin
 }
 
 const fill = (text: string, v: Record<string, string>): string => text.replace(/\{([a-z_]+)\}/g, (m, k: string) => v[k] ?? m);
+
+/** PEP 685/735 normalized-ish extra / group name: safe to put in a command. */
+const PY_GROUP = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?$/;
+
+/**
+ * Dependency fix sentence from the lock's package manager and how the package is declared (§6-3):
+ * a declared package gets its own section's add command, a transitive one "upgrade the parent, else an
+ * override floor" (per major line when the lock holds several). undefined → the kind's generic text.
+ */
+function depFix(f: StoredFinding, v: Record<string, string>, lang: Lang): string | undefined {
+  if (f.rule_id !== "vulnerable-deps" || (f.kind !== "vulnerable" && f.kind !== "vulnerable_no_fix")) return undefined;
+  const lock = f.lockfile ?? "";
+  if (/(^|\/)requirements[^/]*\.txt$/i.test(lock)) return fill(pick(f.kind === "vulnerable" ? DEP_FIX.requirements : DEP_FIX.requirementsNoFix, lang)!, v);
+  const mgr = /(^|\/)uv\.lock$/.test(lock) ? "uv" : /(^|\/)pnpm-lock\.yaml$/.test(lock) ? "pnpm" : /(^|\/)(package-lock|npm-shrinkwrap)\.json$/.test(lock) ? "npm" : null;
+  const d = f.dependency;
+  const { package: pkg = "", version = "-", fixed_version: fixed = "-" } = v;
+  if (f.kind !== "vulnerable" || !mgr || !d || pkg === S[lang].omitted || fixed === "-" || version === "-") return undefined;
+  const t = (x: LocalizedText): string => pick(x, lang)!;
+  const mj = String(major(version));
+  const bump = major(fixed) !== major(version);
+  const w = { ...v, major: mj, fixed_major: String(major(fixed)), sel: d.other_majors ? `${pkg}@${mj}` : pkg };
+  const parts = [fill(t(DEP_FIX.upgrade), w)];
+  if (d.direct && d.manifest && d.section) {
+    let cmd: string | undefined;
+    if (mgr === "uv") {
+      const sec = d.section;
+      const name = sec.replace(/^(dependency-groups|project\.optional-dependencies)\./, "");
+      const flag =
+        sec === "project.dependencies" ? "" : sec === "dependency-groups.dev" || sec === "tool.uv.dev-dependencies" ? "--dev " :
+        sec.startsWith("dependency-groups.") && PY_GROUP.test(name) ? `--group ${name} ` :
+        sec.startsWith("project.optional-dependencies.") && PY_GROUP.test(name) ? `--optional ${name} ` : undefined;
+      if (flag !== undefined) cmd = `uv add ${flag}"${pkg}>=${fixed}"`;
+    } else {
+      const flag = d.section === "dependencies" ? "" : d.section === "devDependencies" ? "-D " : d.section === "optionalDependencies" ? "-O " : undefined;
+      if (flag !== undefined) cmd = `${mgr === "pnpm" ? "pnpm add" : "npm install"} ${flag}${pkg}@${fixed}`;
+    }
+    if (!cmd) return undefined;
+    const m = { ...w, cmd, manifest: dataPath(d.manifest), section: dataText(d.section, 120) };
+    parts.push(fill(t(DEP_FIX.direct), m));
+    if (bump) parts.push(t(DEP_FIX.majorChange));
+    const dir = (p: string): string => (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "");
+    if (dir(d.manifest) !== dir(lock)) parts.push(fill(t(DEP_FIX.memberDir), m));
+  } else if (d.direct) return undefined; // lock says direct, declaring manifest not found
+  else if (mgr === "uv") parts.push(fill(t(DEP_FIX.uvTransitive), w));
+  else {
+    const n = mgr === "pnpm" ? { why: `pnpm why ${pkg}`, overrides: "pnpm.overrides", install: "pnpm install" } : { why: `npm ls ${pkg}`, overrides: "overrides", install: "npm install" };
+    parts.push(fill(t(bump ? DEP_FIX.npmTransitiveMajor : DEP_FIX.npmTransitive), { ...w, ...n }));
+  }
+  if (d.other_majors) parts.push(fill(t(bump ? DEP_FIX.otherMajorsNoFix : DEP_FIX.otherMajors), w));
+  return parts.join(" ");
+}
 
 /** Other lines of the same finding in the same file (`related` "file:line"), e.g. "10, 24". */
 function sameLines(f: StoredFinding): string {
@@ -134,7 +193,7 @@ function item(f: StoredFinding, tpl: Template, lang: Lang, external: boolean): I
   const kt = KIND_TEXT[`${f.rule_id}/${f.kind}`];
   const desc = pick(r && "description" in r ? r.description : undefined, lang) ?? pick(kt?.description, lang) ?? "";
   const uv = /(^|\/)uv\.lock$/.test(f.lockfile ?? "");
-  let fix = pick(r && "fix_prompt" in r ? r.fix_prompt : undefined, lang) ?? pick((uv && kt?.fixUv) || kt?.fix, lang) ?? s.generic;
+  let fix = pick(r && "fix_prompt" in r ? r.fix_prompt : undefined, lang) ?? depFix(f, v, lang) ?? pick((uv && kt?.fixUv) || kt?.fix, lang) ?? s.generic;
   if (f.rule_id === "env-committed" && f.notes?.includes("public_values_only")) fix = s.publicOnly; // AC11
   const human = needsRevoke(f) ? s.revoke : (pick(kt?.human, lang) ?? null);
   return {

@@ -59,6 +59,12 @@ export interface Finding {
   epss?: number;
   cvss?: number;
   lockfile?: string;
+  /**
+   * Dependency items from a lock: declared directly (the manifest at or under the lock's folder and its
+   * section) or reached through another package, and whether the lock also holds another major line of
+   * it. The fix prompt picks the package-manager command from it.
+   */
+  dependency?: { direct: boolean; manifest?: string; section?: string; other_majors?: boolean };
   /** Recheck status vs the baseline (§7-8). */
   recheck?: RecheckStatus;
   recheck_note?: string;

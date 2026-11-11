@@ -55,6 +55,14 @@ First public release.
   severities no longer change between scans while priority lookups are pending.
 - Nested git worktrees, `.claude/worktrees`, git-ignored folders and independent nested clones are
   skipped, so the same key is not reported several times.
+- Fix instructions for a vulnerable package follow how it is declared: the right `npm`, `pnpm` or
+  `uv add` command for its section (dev group, named group, optional extra), "upgrade the parent,
+  else an override floor" for a package that comes in through another one (per major line when the
+  lock holds several; when the only fix is a later major, no override — upgrade or replace the
+  parent instead), and a version edit for `requirements` files. Fewer false alarms: dependency
+  files under test fixtures are "to review", Markdown files are not checked for public-prefix
+  secret names, a placeholder value no longer asks to revoke a key, and credentialed CORS is
+  reported only for `*`, an all-origins pattern or an echoed request Origin.
 
 ### Security
 

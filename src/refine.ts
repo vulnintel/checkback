@@ -23,6 +23,8 @@ export interface Refined {
   notes?: NoteCode[];
   /** Secret part of the match, if narrower than the whole match (used for hashing/masking). */
   value?: string;
+  /** The matched value is a placeholder, not a key: no "revoke and reissue first" step. */
+  notSecret?: boolean;
 }
 
 type Refiner = (i: RefineInput) => Refined | null;
@@ -57,13 +59,16 @@ export const REFINERS: Record<string, Refiner> = {
     if (!/^[A-Z0-9_]+$/.test(name)) return null;
     const rest = name.replace(/^(NEXT_PUBLIC_|VITE_|EXPO_PUBLIC_|REACT_APP_)/, "");
     if (!/SECRET|SERVICE_ROLE|PRIVATE/.test(rest) || /ANON|PUBLISHABLE|PUBLIC|FIREBASE_API_KEY/.test(rest)) return null;
+    if (/\.mdx?$/i.test(i.file.rel)) return null; // Markdown names it in prose or examples; it is never bundled
     const base = i.file.rel.slice(i.file.rel.lastIndexOf("/") + 1);
     const assign = new RegExp(`^\\s*(?:export\\s+)?${name}\\s*=\\s*(.*)$`).exec(i.lineText);
     if (base.startsWith(".env") && assign) {
       const value = dotenvValue(assign[1]!);
+      // `x` / `xxx` / `your-…` / `<…>` / `changeme`: the name is the problem, there is no key to revoke.
+      const notSecret = isPlaceholder(value) || /^x+$/i.test(value);
       // A value in a real .env file is bundled into the browser build — no local-only exception.
-      if (isEnvFile(i.file.rel) && !isPlaceholder(value)) return { severity: "high", confidence: "confirmed" };
-      return { severity: "high", confidence: "review", notes: ["env_reference"] };
+      if (isEnvFile(i.file.rel) && !isPlaceholder(value)) return { severity: "high", confidence: "confirmed", ...(notSecret && { notSecret }) };
+      return { severity: "high", confidence: "review", notes: ["env_reference"], ...(notSecret && { notSecret }) };
     }
     if (isExampleOrDoc(i.file.rel)) return null;
     const ref = new RegExp(`(?:import\\.meta\\.env|process\\.env)(?:\\.${name}\\b|\\[\\s*['"]${name}['"]\\s*\\])`);
@@ -82,11 +87,12 @@ export const REFINERS: Record<string, Refiner> = {
       ? { severity: i.severity, confidence: "info" }
       : { severity: i.severity, confidence: i.confidence },
 
-  // `allow_origins=<variable>`: its value (env/config) cannot be read statically → note it, so a
-  // recheck says "check manually" instead of "still there" (1c E3). Literal ["*"] stays confirmed.
+  // Credentials anywhere in the file. `allow_origins=<variable>` (a settings list, possibly guarded
+  // against "*") is not "any origin": dropped even when an older cloned template still matches it.
   "cors-credentials-any": (i) =>
-    /credentials\s*:\s*true|allow_credentials\s*=\s*True|supports_credentials\s*=\s*True|Allow-Credentials['"]?\s*[:,]\s*['"]?true/i.test(i.text)
-      ? { severity: i.severity, confidence: i.confidence, ...(/^allow_origins\s*=\s*[A-Za-z_]/.test(i.value) && { notes: ["env_driven"] }) }
+    !/^allow_origins\s*=\s*[A-Za-z_]/.test(i.value) &&
+    /credentials\s*:\s*true|allow_credentials\s*=\s*True|supports_credentials\s*=\s*True|Allow-Credentials['"]?\]?\s*[:,=]\s*['"]?true/i.test(i.text)
+      ? { severity: i.severity, confidence: i.confidence }
       : null,
 
   "debug-django": (i) => {
