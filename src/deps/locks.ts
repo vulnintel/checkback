@@ -1,3 +1,4 @@
+import { parse as parseToml } from "smol-toml";
 import { parseAllDocuments } from "yaml";
 
 export type Ecosystem = "npm" | "PyPI";
@@ -29,7 +30,7 @@ export interface LockParse {
   indexUrls?: string[];
   /** requirements: `-r` files that were followed (CWD-relative). */
   includes?: string[];
-  /** npm v2/v3 / pnpm: what the lock records for the root manifest (§7-8 lock consistency). */
+  /** npm v2/v3 / pnpm / uv: what the lock records for the root manifest (§7-8 lock consistency). */
   root?: { deps: Record<string, string>; versions: Record<string, string> };
 }
 
@@ -238,6 +239,95 @@ function reachable(roots: string[], snapshots: Obj): Set<string> {
 
 /** PEP 503 name normalization (OSV/PyPI canonical form). */
 export const normalizePyName = (n: string): string => n.toLowerCase().replace(/[-_.]+/g, "-");
+
+export const PYPI_HOST = /^https?:\/\/(?:[^/@]*@)?(?:pypi\.org|pypi\.python\.org|files\.pythonhosted\.org)(?:[:/]|$)/i;
+
+/**
+ * Python declarations (name + PEP 508 spec, or "local:" for path/git/url/workspace) → name → one
+ * comparable range in the npm-style syntax `satisfies` reads: markers dropped, whitespace removed,
+ * `==` → `=`, comma clauses sorted and space-joined, several declarations of a name joined with `||`.
+ * Both sides of the uv lock-consistency check (pyproject and uv.lock metadata) go through this.
+ */
+export function pySpecMap(deps: { name: string; spec: string }[]): Record<string, string> {
+  const by = new Map<string, Set<string>>();
+  for (const d of deps) {
+    const raw = d.spec.trim();
+    const spec = /^(local:|@)/.test(raw)
+      ? "local:"
+      : raw.split(";")[0]!.replace(/\s+/g, "").split(",").filter(Boolean).map((c) => c.replace(/^===?/, "=")).sort().join(" ");
+    const n = normalizePyName(d.name);
+    by.set(n, (by.get(n) ?? new Set()).add(spec));
+  }
+  return Object.fromEntries([...by].map(([n, s]) => [n, [...s].sort().join(" || ")]));
+}
+
+const UV_LOCAL_KEYS = ["git", "url", "path", "directory", "editable", "virtual", "workspace"];
+
+/**
+ * uv.lock (lock `version = 1`, any revision). Only packages whose source is a registry are versions
+ * from an index (PyPI → registry, any other index → private); editable / virtual / path / directory /
+ * git / url sources are same-repo or direct sources (local, never looked up). A name may appear at
+ * several versions (resolution forks). Roots = editable / virtual packages (the project and its
+ * workspace members): their dependencies are direct; packages reachable only through dev groups are dev.
+ */
+export function parseUvLock(text: string): LockParse {
+  let d: Obj;
+  try {
+    d = parseToml(text) as Obj;
+  } catch {
+    return { status: "error", detail: "invalid TOML", packages: [] };
+  }
+  if (d.version !== 1) return { status: "error", detail: d.version === undefined ? "no lock version" : `unsupported lock version ${String(d.version)}`, packages: [] };
+  const pkgs = (Array.isArray(d.package) ? d.package : []).filter(isObj).filter((p) => typeof p.name === "string");
+  const src = (p: Obj): Obj => (isObj(p.source) ? p.source : {});
+  const isRoot = (p: Obj): boolean => "editable" in src(p) || "virtual" in src(p);
+  const refs = (o: unknown): Obj[] => (Array.isArray(o) ? o.filter(isObj) : isObj(o) ? Object.values(o).flatMap(refs) : []);
+  const byName = new Map<string, Obj[]>();
+  for (const p of pkgs) byName.set(normalizePyName(p.name as string), [...(byName.get(normalizePyName(p.name as string)) ?? []), p]);
+  // A dependency names a version only when its name is locked at several.
+  const resolve = (r: Obj): Obj[] => (byName.get(normalizePyName(String(r.name))) ?? []).filter((p) => typeof r.version !== "string" || p.version === r.version);
+
+  const roots = pkgs.filter(isRoot);
+  const direct = new Set(roots.flatMap((p) => [p.dependencies, p["optional-dependencies"], p["dev-dependencies"]].flatMap(refs)).map((r) => normalizePyName(String(r.name))));
+  const prod = new Set<Obj>();
+  const stack = [...roots];
+  while (stack.length) {
+    const p = stack.pop()!;
+    if (prod.has(p)) continue;
+    prod.add(p);
+    // shortcut: every optional-dependencies (extra) of a reached package counts as prod; split by requested extras if dev flags look wrong.
+    for (const r of [p.dependencies, p["optional-dependencies"]].flatMap(refs)) stack.push(...resolve(r));
+  }
+
+  const packages: Package[] = pkgs.map((p) => {
+    const s = src(p);
+    const hash = isObj(p.sdist) && typeof p.sdist.hash === "string" ? p.sdist.hash : refs(p.wheels).find((w) => typeof w.hash === "string")?.hash;
+    return {
+      ecosystem: "PyPI",
+      name: normalizePyName(p.name as string),
+      version: typeof p.version === "string" ? p.version : null,
+      dev: !prod.has(p),
+      direct: direct.has(normalizePyName(p.name as string)),
+      origin: typeof s.registry === "string" ? (PYPI_HOST.test(s.registry) ? "registry" : "private") : "local",
+      ...(typeof hash === "string" && { integrity: hash }),
+    };
+  });
+
+  // §7-8: what the lock recorded from the root pyproject (requires-dist + dependency groups).
+  const top = pkgs.find((p) => src(p).editable === "." || src(p).virtual === ".");
+  let root: LockParse["root"];
+  if (top && isObj(top.metadata)) {
+    const reqs = [top.metadata["requires-dist"], top.metadata["requires-dev"]].flatMap(refs);
+    const deps = pySpecMap(reqs.map((r) => ({ name: String(r.name), spec: UV_LOCAL_KEYS.some((k) => k in r) ? "local:" : typeof r.specifier === "string" ? r.specifier : "" })));
+    const versions: Record<string, string> = {};
+    for (const n of Object.keys(deps)) {
+      const vs = (byName.get(n) ?? []).map((p) => p.version).filter((v): v is string => typeof v === "string");
+      if (vs.length === 1) versions[n] = vs[0]!; // forked versions: no single version to check
+    }
+    root = { deps, versions };
+  }
+  return { status: "ok", packages, ...(root && { root }) };
+}
 
 /**
  * requirements*.txt: `==` pins only give a version; `-r` (*.txt / *.in only) is followed via `readInclude`

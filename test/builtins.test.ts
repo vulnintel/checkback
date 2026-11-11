@@ -380,17 +380,17 @@ describe("vulnerable-deps (§7-3)", () => {
     const at = (r: Awaited<ReturnType<typeof scanDefault>>): (string | undefined)[][] => byRule(r, "vulnerable-deps").map((f) => [f.kind, f.confidence, f.location?.file]).sort();
     let r = await scanDefault(project({ "package.json": pj({ name: "a", dependencies: { x: "1" } }), "yarn.lock": "" }));
     expect(at(r)).toEqual([["unsupported_lock", "review", "yarn.lock"]]);
-    // A root uv.lock (workspace) covers member pyprojects, not a package.json.
+    // A root poetry.lock covers member pyprojects, not a package.json (uv.lock is parsed now: test/uv.test.ts).
     r = await scanDefault(
       project({
-        "uv.lock": "version = 1\n",
+        "poetry.lock": "",
         "pyproject.toml": '[project]\nname = "app"\ndependencies = ["fastapi"]\n',
         "server/pyproject.toml": '[project]\nname = "srv"\ndependencies = ["uvicorn"]\n',
         "web/package.json": pj({ name: "w", dependencies: { x: "1" } }),
       }),
     );
     expect(at(r)).toEqual([
-      ["unsupported_lock", "review", "uv.lock"],
+      ["unsupported_lock", "review", "poetry.lock"],
       ["version_unknown", "review", "web/package.json"],
     ]);
     r = await scanDefault(project({ "requirements.txt": "PyYAML>=5.1\nflask==2.0.0\n" }));

@@ -73,6 +73,39 @@ write(
     2,
   ),
 );
+// uv project with a known-vulnerable pin (jinja2 2.10, fixed in 2.10.1): uv.lock is parsed, not "not supported yet".
+write("py/pyproject.toml", '[project]\nname = "e2e-py"\nversion = "0.1.0"\nrequires-python = ">=3.9"\ndependencies = ["jinja2==2.10"]\n');
+write(
+  "py/uv.lock",
+  [
+    "version = 1",
+    "revision = 3",
+    'requires-python = ">=3.9"',
+    "",
+    "[[package]]",
+    'name = "e2e-py"',
+    'version = "0.1.0"',
+    'source = { virtual = "." }',
+    'dependencies = [{ name = "jinja2" }]',
+    "",
+    "[package.metadata]",
+    'requires-dist = [{ name = "jinja2", specifier = "==2.10" }]',
+    "",
+    "[[package]]",
+    'name = "jinja2"',
+    'version = "2.10"',
+    'source = { registry = "https://pypi.org/simple" }',
+    'dependencies = [{ name = "markupsafe" }]',
+    'sdist = { url = "https://files.pythonhosted.org/packages/56/e6/332789f295cf22308386cf5bbd1f4e00ed11484299c5d7383378cf48ba47/Jinja2-2.10.tar.gz", hash = "sha256:f84be1bb0040caca4cea721fcbbbbd61f9be9464ca236387158b0feea01914a4", size = 261631 }',
+    "",
+    "[[package]]",
+    'name = "markupsafe"',
+    'version = "3.0.4"',
+    'source = { registry = "https://pypi.org/simple" }',
+    'sdist = { url = "https://files.pythonhosted.org/packages/38/9b/e422a865e1d5d57d0e509b4e0bf1c1a70a7f6382c29a5aa428df994c8bc8/markupsafe-3.0.4.tar.gz", hash = "sha256:2e9ad7dd851bf45fab9f75cbff4cb493fee9979e8d8c7c9c3ee119022518edd6", size = 153777 }',
+    "",
+  ].join("\n"),
+);
 write(".gitignore", "node_modules/\n"); // no .env rule
 write(".env", `GITHUB_TOKEN=${SECRETS.github}\n`); // committed below
 write(".env.example", "OPENAI_API_KEY=your-key-here\n"); // placeholder: must not be reported
@@ -182,6 +215,10 @@ await check("cli: scan finds the planted problems with expected severity/confide
   externalReason(j.checked, "scan");
   console.log(`       ${j.findings.length} findings in ${Date.now() - t0} ms`);
 });
+await check("cli: uv.lock is read — no 'not supported' / 'could not be read' / 'no lock file' item for the uv project", () => {
+  const py = cliFindings.filter((f) => f.rule_id === "vulnerable-deps" && f.location?.file?.startsWith("py/"));
+  eq(py.map((f) => f.kind), [], "vulnerable-deps items under py/");
+});
 await check("cli: scan JSON has no secret values or masked values", () => {
   const r = run(["scan"], { timeoutMs: 90_000 });
   noSecrets(r.out, "scan");
@@ -219,6 +256,8 @@ await check("cli: sbom is CycloneDX >= 1.4 with the locked package as a purl", (
   eq(bom.bomFormat, "CycloneDX", "bomFormat");
   assert(Number(bom.specVersion) >= 1.4, `specVersion ${bom.specVersion}`);
   assert((bom.components ?? []).some((c) => c.purl === "pkg:npm/lodash@4.17.20"), "lodash purl missing");
+  for (const purl of ["pkg:pypi/jinja2@2.10", "pkg:pypi/markupsafe@3.0.4"]) assert((bom.components ?? []).some((c) => c.purl === purl), `${purl} missing (uv.lock)`);
+  assert(!(bom.components ?? []).some((c) => c.name === "e2e-py"), "uv project itself listed as a component");
   noSecrets(r.out, "sbom");
 });
 await check("cli: sbom --upload is valid CycloneDX JSON", () => {

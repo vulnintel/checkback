@@ -133,7 +133,8 @@ function item(f: StoredFinding, tpl: Template, lang: Lang, external: boolean): I
   const r = tpl.rules.find((x) => x.id === f.rule_id);
   const kt = KIND_TEXT[`${f.rule_id}/${f.kind}`];
   const desc = pick(r && "description" in r ? r.description : undefined, lang) ?? pick(kt?.description, lang) ?? "";
-  let fix = pick(r && "fix_prompt" in r ? r.fix_prompt : undefined, lang) ?? pick(kt?.fix, lang) ?? s.generic;
+  const uv = /(^|\/)uv\.lock$/.test(f.lockfile ?? "");
+  let fix = pick(r && "fix_prompt" in r ? r.fix_prompt : undefined, lang) ?? pick((uv && kt?.fixUv) || kt?.fix, lang) ?? s.generic;
   if (f.rule_id === "env-committed" && f.notes?.includes("public_values_only")) fix = s.publicOnly; // AC11
   const human = needsRevoke(f) ? s.revoke : (pick(kt?.human, lang) ?? null);
   return {

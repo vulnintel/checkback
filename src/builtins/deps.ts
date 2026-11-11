@@ -130,15 +130,14 @@ export async function depsBuiltins(ctx: BuiltinCtx, d: DepsInput): Promise<DepsO
   if (d.vuln) {
     // Any lock of the manifest's ecosystem in its folder or above covers it: parsed ones are checked,
     // broken / not-yet-supported ones get their own item below — never "no lock file" (B3, B8).
-    const lockDirs = new Set([
-      ...inv.lockfiles.filter((l) => l.kind !== "requirements").map((l) => `npm\0${dirOf(l.path)}`),
-      ...inv.unsupported.map((u) => `${unsupportedEco(u.kind)}\0${dirOf(u.path)}`),
-    ]);
+    const locks = inv.lockfiles.filter((l) => l.kind !== "requirements");
+    const lockDirs = new Set([...locks.map((l) => `${lockEco(l.kind)}\0${dirOf(l.path)}`), ...inv.unsupported.map((u) => `${unsupportedEco(u.kind)}\0${dirOf(u.path)}`)]);
     const reqDirs = new Set(inv.lockfiles.filter((l) => l.kind === "requirements").map((l) => dirOf(l.path)));
     // Next to a parsed lock of its ecosystem (1c E4: bun.lock + package-lock.json) the unsupported one is only a note.
-    const parsedNpm = new Set(inv.lockfiles.filter((l) => l.kind !== "requirements" && l.status === "ok").map((l) => dirOf(l.path)));
+    const parsed = new Set(locks.filter((l) => l.status === "ok").map((l) => `${lockEco(l.kind)}\0${dirOf(l.path)}`));
     for (const u of inv.unsupported) {
-      const beside = unsupportedEco(u.kind) === "npm" ? parsedNpm.has(dirOf(u.path)) : reqDirs.has(dirOf(u.path));
+      const eco = unsupportedEco(u.kind);
+      const beside = parsed.has(`${eco}\0${dirOf(u.path)}`) || (eco === "PyPI" && reqDirs.has(dirOf(u.path)));
       out.push({ rule: "vulnerable-deps", kind: "unsupported_lock", severity: "medium", confidence: beside ? "info" : "review", file: u.path, line: null, value: `unsupported:${u.kind}` });
     }
     for (const l of inv.lockfiles) {
@@ -151,8 +150,11 @@ export async function depsBuiltins(ctx: BuiltinCtx, d: DepsInput): Promise<DepsO
       const covered = ancestors(dir).some((a) => lockDirs.has(`${m.ecosystem}\0${a}`)) || (m.ecosystem === "PyPI" && reqDirs.has(dir));
       if (!covered) out.push({ rule: "vulnerable-deps", kind: "version_unknown", severity: "medium", confidence: "review", file: m.path, line: null, value: `unlocked:${m.path}` });
     }
+    // An unpinned requirements name that a parsed uv.lock in the same folder or above pins is covered by that lock.
+    const uvPinned = new Map<string, Set<string>>();
+    for (const l of locks) if (l.kind === "uv" && l.status === "ok") uvPinned.set(dirOf(l.path), new Set(l.packages.filter((p) => p.version !== null).map((p) => p.name)));
     for (const l of inv.lockfiles) {
-      if (l.kind === "requirements" && l.packages.some((p) => p.version === null)) {
+      if (l.kind === "requirements" && l.packages.some((p) => p.version === null && !ancestors(dirOf(l.path)).some((a) => uvPinned.get(a)?.has(p.name)))) {
         out.push({ rule: "vulnerable-deps", kind: "version_unpinned", severity: "medium", confidence: "review", file: l.path, line: null, value: `unpinned:${l.path}` });
       }
     }
@@ -459,7 +461,8 @@ async function verifyFixes(pkgs: VulnPkg[], net: NetCtx, now: number): Promise<v
 
 const knownIds = (p: VulnPkg): Set<string> => new Set([...p.vulns, ...(p.other ?? [])].map((v) => v.id));
 const fixCandidates = (p: VulnPkg): string[] => safeFixes([...p.vulns, ...(p.other ?? [])], pkgKey(p.t.ecosystem, p.t.name), p.t.version!);
-const unsupportedEco = (kind: string): "npm" | "PyPI" => (/^(poetry|uv|pipenv)$/.test(kind) ? "PyPI" : "npm");
+const lockEco = (kind: string): "npm" | "PyPI" => (kind === "uv" ? "PyPI" : "npm");
+const unsupportedEco = (kind: string): "npm" | "PyPI" => (/^(poetry|pipenv)$/.test(kind) ? "PyPI" : "npm");
 
 interface Reg {
   s: Exists;

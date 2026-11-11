@@ -15,7 +15,7 @@ First public release.
 - Local scan with the read-only default template: secret keys in code and build output, committed
   `.env` and key files (including git history), `.gitignore` without an `.env` rule, Supabase RLS
   and policies, Firebase rules, CORS, debug settings and production source maps.
-- Dependency checks from `package-lock.json`, `pnpm-lock.yaml` and `requirements*.txt`: vulnerable
+- Dependency checks from `package-lock.json`, `pnpm-lock.yaml`, `uv.lock` and `requirements*.txt`: vulnerable
   and malicious packages (OSV.dev), non-existent and typo-like package names (npm, PyPI), with KEV,
   VPI level and EPSS priority from the VulnIntel public lookup. External lookups run only after
   first-run consent.

@@ -5,16 +5,16 @@ import { join, resolve } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import { parse as parseYaml } from "yaml";
 import { collectFiles, decode, MAX_FILE_BYTES, readText, type FileEntry } from "../files.js";
-import { normalizePyName, parseNpmLock, parsePnpmLock, parseRequirements, type Ecosystem, type Package } from "./locks.js";
+import { normalizePyName, parseNpmLock, parsePnpmLock, parseRequirements, parseUvLock, PYPI_HOST, type Ecosystem, type Package } from "./locks.js";
 
 export interface Lockfile {
   /** CWD-relative path. */
   path: string;
-  kind: "npm" | "pnpm" | "requirements";
+  kind: "npm" | "pnpm" | "uv" | "requirements";
   status: "ok" | "regenerate" | "error";
   detail?: string;
   packages: Package[];
-  /** What the lock records for its root manifest (npm v2/v3, pnpm). */
+  /** What the lock records for its root manifest (npm v2/v3, pnpm, uv). */
   root?: { deps: Record<string, string>; versions: Record<string, string> };
 }
 
@@ -44,16 +44,15 @@ export interface PrivateConfig {
 
 export interface Inventory {
   lockfiles: Lockfile[];
-  /** Lockfiles we recognize but do not parse yet (patch release): yarn, bun, poetry, uv, Pipfile.lock. */
+  /** Lockfiles we recognize but do not parse yet (patch release): yarn, bun, poetry, Pipfile.lock. */
   unsupported: { path: string; kind: string }[];
   manifests: Manifest[];
   privateConfig: PrivateConfig;
 }
 
 const UNSUPPORTED = new Map([
-  ["yarn.lock", "yarn"], ["bun.lock", "bun"], ["bun.lockb", "bun-binary"], ["poetry.lock", "poetry"], ["uv.lock", "uv"], ["Pipfile.lock", "pipenv"],
+  ["yarn.lock", "yarn"], ["bun.lock", "bun"], ["bun.lockb", "bun-binary"], ["poetry.lock", "poetry"], ["Pipfile.lock", "pipenv"],
 ]);
-const PYPI_HOST = /^https?:\/\/(?:[^/@]*@)?(?:pypi\.org|pypi\.python\.org|files\.pythonhosted\.org)(?:[:/]|$)/i;
 const NPM_HOST = /^https?:\/\/registry\.(?:npmjs\.org|yarnpkg\.com)\/?$/i;
 const LOCAL_SPEC = /^(workspace|file|link|portal|git|git\+[a-z]+|github|gitlab|bitbucket|https?):|^[./~]|^[\w-]+\/[\w.-]+(#.*)?$/;
 
@@ -156,13 +155,14 @@ export async function readInventory(cwd: string, files?: FileEntry[], env: NodeJ
     const unsupported = UNSUPPORTED.get(b);
     if (unsupported) {
       inv.unsupported.push({ path: f.rel, kind: unsupported });
-      if (b === "uv.lock") {
-        const t = await text(f.rel);
-        for (const m of t?.matchAll(/registry\s*=\s*"([^"]+)"/g) ?? []) if (!PYPI_HOST.test(m[1]!)) markAll("PyPI", f.rel);
-      }
       continue;
     }
-    if (b === "package-lock.json" || b === "npm-shrinkwrap.json") {
+    if (b === "uv.lock") {
+      const t = await text(f.rel);
+      // Any non-PyPI index in the lock (even an unreadable one) keeps every PyPI name local (§7-2 rule 4).
+      for (const m of t?.matchAll(/registry\s*=\s*"([^"]+)"/g) ?? []) if (!PYPI_HOST.test(m[1]!)) markAll("PyPI", f.rel);
+      inv.lockfiles.push({ path: f.rel, kind: "uv", ...(t === null ? { status: "error", detail: "unreadable", packages: [] } : parseUvLock(t)) });
+    } else if (b === "package-lock.json" || b === "npm-shrinkwrap.json") {
       const t = await text(f.rel);
       const dir = f.rel.slice(0, f.rel.length - b.length);
       const pj = await text(`${dir}package.json`);
@@ -339,9 +339,12 @@ function pythonDeps(file: string, d: Obj): ManifestDep[] {
   const poetry = isObj(d.tool) && isObj(d.tool.poetry) ? d.tool.poetry : {};
   table(poetry.dependencies, false);
   table(poetry["dev-dependencies"], true);
+  // Legacy uv dev list (uv.lock records it as the "dev" group).
+  const uvTool = isObj(d.tool) && isObj(d.tool.uv) ? d.tool.uv : {};
+  for (const s of Array.isArray(uvTool["dev-dependencies"]) ? uvTool["dev-dependencies"] : []) pep508(s, true);
   if (isObj(poetry.group)) for (const g of Object.values(poetry.group)) if (isObj(g)) table(g.dependencies, true);
   // [tool.uv.sources] workspace / path / git / url entries are not from PyPI (B7).
-  const uv = isObj(d.tool) && isObj(d.tool.uv) && isObj(d.tool.uv.sources) ? d.tool.uv.sources : {};
+  const uv = isObj(uvTool.sources) ? uvTool.sources : {};
   const local = new Set(Object.entries(uv).filter(([, v]) => [v].flat().some((s) => isObj(s) && (s.workspace === true || s.path || s.git || s.url))).map(([n]) => normalizePyName(n)));
   for (const x of out) if (local.has(x.name)) x.spec = "local:";
   return out;
@@ -415,7 +418,9 @@ export function lookupScope(inv: Inventory): LookupScope {
     }
   }
   const sorted = [...targets.values()].sort((a, b) => cmp(a.ecosystem, b.ecosystem) || cmp(a.name, b.name) || cmp(a.version ?? "", b.version ?? ""));
-  for (const t of sorted) t.sources.sort();
+  // A lock file is the primary source; a requirements file (often `uv export` output) comes after it.
+  const reqLast = (s: string): number => (/(^|\/)requirements[^/]*\.txt$/i.test(s) ? 1 : 0);
+  for (const t of sorted) t.sources.sort((a, b) => reqLast(a) - reqLast(b) || cmp(a, b));
   return { targets: sorted, excluded, privateEcosystems: [...priv.allPrivate].sort() };
 }
 

@@ -40,9 +40,10 @@ at about 50 vulnerabilities a minute, so a project with a few hundred known vuln
 or 4 scans before every priority badge is filled in. Until then those packages keep their OSV/CVSS
 severity.
 
-Dependency checks read `package-lock.json`, `pnpm-lock.yaml` and `requirements*.txt`. A project
-that has only `bun.lock` (the Lovable default) or `uv.lock` gets every other check, but its
-dependencies are not checked yet.
+Dependency checks read `package-lock.json`, `pnpm-lock.yaml`, `uv.lock` and `requirements*.txt`.
+A project that has only `bun.lock` (the Lovable default) gets every other check, but its
+dependencies are not checked yet. When `uv.lock` and a `requirements*.txt` sit in the same folder,
+a package at the same version is one finding that points at `uv.lock`.
 
 Prefer to stay in the terminal or in Claude Code? See [Claude Code plugin](#claude-code-plugin),
 [MCP server](#mcp-server) and [Command line](#command-line).
@@ -136,7 +137,7 @@ key was moved into `.env.local` instead of being revoked, so checkback reports t
 | Checks git: `.env` and key files that are tracked or still in history, a `.gitignore` without an `.env` rule | Check authorization, IDOR, injection or other app logic. It writes a review checklist for your AI instead, and does not re-check the AI's answers |
 | Reads Supabase migrations (tables without RLS, always-true policies) and Firebase rules | Connect to your Supabase or Firebase project or database |
 | Flags wildcard CORS, debug mode, public source maps | Scan websites or anything over the network |
-| Reads `package-lock.json`, `pnpm-lock.yaml` and `requirements*.txt`; looks up vulnerable, malicious and non-existent packages (after consent) | Parse yarn, bun, poetry, uv or Pipfile locks yet (it says "not supported yet" instead of "no problems") |
+| Reads `package-lock.json`, `pnpm-lock.yaml`, `uv.lock` and `requirements*.txt`; looks up vulnerable, malicious and non-existent packages (after consent) | Parse yarn, bun, poetry or Pipfile locks yet (it says "not supported yet" instead of "no problems") |
 | Writes a CycloneDX SBOM locally | Upload your code anywhere |
 | Re-checks its own findings after a fix | Edit your code, or run an AI by itself |
 

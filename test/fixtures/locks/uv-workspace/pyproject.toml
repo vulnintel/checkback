@@ -1,0 +1,12 @@
+[project]
+name = "ws-root"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = ["ws-lib", "localpkg", "markupsafe==2.1.5", "packaging @ git+https://github.com/pypa/packaging@24.0"]
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+ws-lib = { workspace = true }
+localpkg = { path = "vendor/localpkg" }

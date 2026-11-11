@@ -7,6 +7,8 @@ export interface KindText {
   title: LocalizedText;
   description: LocalizedText;
   fix: LocalizedText;
+  /** Dependency items whose lock is a uv.lock: the uv commands that regenerate it. */
+  fixUv?: LocalizedText;
   /** "Human first" step for the fix prompt (key rotation etc.). */
   human?: LocalizedText;
 }
@@ -14,6 +16,11 @@ export interface KindText {
 const LOCK_RULE = {
   ko: "패키지 매니저 명령으로 버전을 올려 lock을 다시 만드세요. lock 파일을 손으로 고치지 마세요.",
   en: "Upgrade with your package manager so it regenerates the lock file. Do not edit the lock file by hand.",
+};
+// §6-3: `uv add` only for a package pyproject.toml already declares (a version bump, not a new package).
+const UV_RULE = {
+  ko: 'uv 프로젝트입니다. pyproject.toml에 이미 선언된 패키지면 `uv add "{package}>={fixed_version}"`로 하한을 올리고, 다른 패키지를 통해 들어온 패키지면 `uv lock --upgrade-package {package}`로 uv.lock을 다시 만드세요. lock 파일을 손으로 고치지 마세요.',
+  en: 'This is a uv project. If pyproject.toml already declares the package, raise its lower bound with `uv add "{package}>={fixed_version}"`; if it comes in through another package, run `uv lock --upgrade-package {package}` to regenerate uv.lock. Do not edit the lock file by hand.',
 };
 
 export const BUILTIN_NAMES: Record<string, LocalizedText> = {
@@ -160,6 +167,10 @@ export const KIND_TEXT: Record<string, KindText> = {
       ko: `{package}를 {fixed_version} 이상으로 올리세요(취약점: {vuln_ids}, lock: {lockfile}). ${LOCK_RULE.ko}`,
       en: `Upgrade {package} to {fixed_version} or later (vulnerabilities: {vuln_ids}, lock: {lockfile}). ${LOCK_RULE.en}`,
     },
+    fixUv: {
+      ko: `{package}를 {fixed_version} 이상으로 올리세요(취약점: {vuln_ids}, lock: {lockfile}). ${UV_RULE.ko}`,
+      en: `Upgrade {package} to {fixed_version} or later (vulnerabilities: {vuln_ids}, lock: {lockfile}). ${UV_RULE.en}`,
+    },
   },
   "vulnerable-deps/vulnerable_no_fix": {
     title: { ko: "수정 버전이 없는 취약 패키지", en: "Vulnerable package without a fix" },
@@ -167,6 +178,10 @@ export const KIND_TEXT: Record<string, KindText> = {
     fix: {
       ko: `수정 버전 없음 — {package} 사용 중단을 검토하세요(취약점: {vuln_ids}). ${LOCK_RULE.ko}`,
       en: `No fixed version — consider stopping use of {package} (vulnerabilities: {vuln_ids}). ${LOCK_RULE.en}`,
+    },
+    fixUv: {
+      ko: `수정 버전 없음 — {package} 사용 중단을 검토하세요(취약점: {vuln_ids}). 이 uv 프로젝트는 pyproject.toml을 고친 뒤 \`uv lock\`으로 uv.lock을 다시 만드세요. lock 파일을 손으로 고치지 마세요.`,
+      en: `No fixed version — consider stopping use of {package} (vulnerabilities: {vuln_ids}). In this uv project, edit pyproject.toml and run \`uv lock\` to regenerate uv.lock. Do not edit the lock file by hand.`,
     },
   },
   "vulnerable-deps/version_unknown": {
@@ -187,7 +202,7 @@ export const KIND_TEXT: Record<string, KindText> = {
   },
   "vulnerable-deps/lock_unreadable": {
     title: { ko: "lock 파일을 읽지 못함 — 의존성 검사 안 됨", en: "Lock file could not be read — dependencies not checked" },
-    description: { ko: "lock 파일이 깨졌거나(JSON·YAML 오류, 머지 충돌 표식) 지원하지 않는 형식 버전이라 설치 버전을 확인하지 못했고, 취약점을 판정하지 못했습니다.", en: "The lock file is broken (JSON/YAML error, merge conflict markers) or uses an unsupported format version, so installed versions and vulnerabilities could not be checked." },
+    description: { ko: "lock 파일이 깨졌거나(JSON·YAML·TOML 오류, 머지 충돌 표식) 지원하지 않는 형식 버전이라 설치 버전을 확인하지 못했고, 취약점을 판정하지 못했습니다.", en: "The lock file is broken (JSON/YAML/TOML error, merge conflict markers) or uses an unsupported format version, so installed versions and vulnerabilities could not be checked." },
     fix: {
       ko: "{file}에 머지 충돌 표식이 남아 있으면 정리한 뒤, 패키지 매니저로 다시 설치해 lock 파일을 새로 만드세요. lock 파일을 손으로 고치지 마세요.",
       en: "If {file} still has merge conflict markers, resolve them; then reinstall with your package manager so it writes a fresh lock file. Do not edit the lock file by hand.",
@@ -204,7 +219,7 @@ export const KIND_TEXT: Record<string, KindText> = {
   "vulnerable-deps/unsupported_lock": {
     title: { ko: "아직 지원하지 않는 lock 형식 — 버전 확인 안 됨", en: "Lock format not supported yet — versions not checked" },
     description: { ko: "이 lock 형식은 아직 읽지 못해 설치 버전과 취약점을 확인하지 못했습니다. 다음 릴리스에서 지원합니다.", en: "This lock format cannot be read yet, so installed versions and vulnerabilities were not checked. Support is planned for the next release." },
-    fix: { ko: "다음 릴리스를 기다리거나 지원 형식(npm·pnpm·requirements)으로 다시 검사하세요.", en: "Wait for the next release or check with a supported format (npm, pnpm, requirements)." },
+    fix: { ko: "다음 릴리스를 기다리거나 지원 형식(npm·pnpm·uv·requirements)으로 다시 검사하세요.", en: "Wait for the next release or check with a supported format (npm, pnpm, uv, requirements)." },
   },
 };
 

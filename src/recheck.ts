@@ -7,6 +7,7 @@ import { realpath } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { defaultAppDir, projectKey, readJson, writeJson } from "./appdata.js";
 import type { Inventory } from "./deps/inventory.js";
+import { pySpecMap } from "./deps/locks.js";
 import { readText, type FileEntry } from "./files.js";
 import type { CheckedRule, Confidence, Finding, RecheckStatus } from "./types.js";
 import { satisfies } from "./versions.js";
@@ -98,7 +99,10 @@ export async function recordFixRequest(cwd: string, ids: string[], appDir = defa
   return snap;
 }
 
-/** Lock consistency inputs for npm/pnpm locks (requirements have no separate lock). */
+/**
+ * Lock consistency inputs for npm/pnpm/uv locks (requirements have no separate lock).
+ * shortcut: uv compares the root pyproject.toml only; a workspace member's pyproject edit is not tracked — add member manifests if Q4 misses them.
+ */
 export async function lockStates(inv: Inventory, files: FileEntry[]): Promise<LockState[]> {
   const byRel = new Map(files.map((f) => [f.rel, f]));
   const txt = async (rel: string): Promise<string | null> => {
@@ -111,17 +115,24 @@ export async function lockStates(inv: Inventory, files: FileEntry[]): Promise<Lo
     if (l.kind === "requirements" || l.status !== "ok") continue;
     const dir = l.path.includes("/") ? l.path.slice(0, l.path.lastIndexOf("/") + 1) : "";
     const lock = await txt(l.path);
-    const man = await txt(`${dir}package.json`);
+    const uv = l.kind === "uv";
+    const man = await txt(`${dir}${uv ? "pyproject.toml" : "package.json"}`);
     let manifestDeps: Record<string, string> | null = null;
-    try {
-      const m = man ? (JSON.parse(man) as Record<string, Record<string, string> | undefined>) : null;
-      if (m) manifestDeps = { ...m.dependencies, ...m.devDependencies, ...m.optionalDependencies };
-    } catch {
-      manifestDeps = null;
+    if (uv) {
+      const m = inv.manifests.find((x) => x.path === `${dir}pyproject.toml`);
+      manifestDeps = m ? pySpecMap(m.deps) : null;
+    } else {
+      try {
+        const m = man ? (JSON.parse(man) as Record<string, Record<string, string> | undefined>) : null;
+        if (m) manifestDeps = { ...m.dependencies, ...m.devDependencies, ...m.optionalDependencies };
+      } catch {
+        manifestDeps = null;
+      }
     }
     const entries: LockState["entries"] = {};
     for (const p of l.packages) {
-      if (p.version === null) continue;
+      // uv project / workspace / path / git entries carry no hash by design: nothing to compare.
+      if (p.version === null || (uv && p.origin === "local")) continue;
       (entries[p.name] ??= []).push({ version: p.version, ...(p.integrity && { integrity: p.integrity }), ...(p.resolved && { resolved: p.resolved }) });
     }
     out.push({ path: l.path, lockHash: sha(lock ?? ""), manifestHash: man === null ? null : sha(man), manifestDeps, root: l.root ?? null, entries });
