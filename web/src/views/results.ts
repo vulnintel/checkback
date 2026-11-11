@@ -5,6 +5,7 @@ import { api } from "../api.js";
 import { extLink, h, modal, replace } from "../dom.js";
 import { emptyKind } from "../empty.js";
 import { t } from "../i18n.js";
+import { pickBySeverity } from "../pick.js";
 import { go, report, S, type GFinding } from "../state.js";
 import { aiCheckDialog, fixDialog, ignoreDialog, pasteToAi, trackFinding, watchDialog } from "./dialogs.js";
 import { loc, recheckSummary, requestedHead, requestedOf } from "./recheck.js";
@@ -12,6 +13,8 @@ import { startScan } from "./start.js";
 
 const MAX_BATCH = 10;
 let updateBar: () => void = () => {};
+const boxes = new Map<string, HTMLInputElement>(); // card checkboxes, so quick select can tick them without a re-render
+let capped = 0; // how many matched the last quick select when it was cut to MAX_BATCH, else 0
 const cves = (f: GFinding): string[] => (f.vuln_ids ?? []).filter((v) => /^CVE-\d{4}-\d{4,}$/.test(v));
 
 function badges(f: GFinding): HTMLElement {
@@ -32,6 +35,22 @@ function card(f: GFinding, rerender: () => void): HTMLElement {
   const c = t().card;
   const sel = S.selected.has(f.id);
   const ids = cves(f);
+  const box = f.carried
+    ? null
+    : h("input", {
+        type: "checkbox",
+        checked: sel,
+        "aria-label": t().result.select(f.title),
+        onchange: (e: Event) => {
+          const el = e.target as HTMLInputElement;
+          if (el.checked) S.selected.add(f.id);
+          else S.selected.delete(f.id);
+          el.closest(".card")?.classList.toggle("selected", el.checked);
+          capped = 0;
+          updateBar(); // keep keyboard focus on the checkbox: no full re-render
+        },
+      });
+  if (box) boxes.set(f.id, box as HTMLInputElement);
   const trackBtn =
     S.st!.key !== "none" && f.rule_id === "vulnerable-deps"
       ? ids.length === 0
@@ -46,20 +65,7 @@ function card(f: GFinding, rerender: () => void): HTMLElement {
     h(
       "div",
       { class: "card-head" },
-      f.carried
-        ? null
-        : h("input", {
-            type: "checkbox",
-            checked: sel,
-            "aria-label": t().result.select(f.title),
-            onchange: (e: Event) => {
-              const box = e.target as HTMLInputElement;
-              if (box.checked) S.selected.add(f.id);
-              else S.selected.delete(f.id);
-              box.closest(".card")?.classList.toggle("selected", box.checked);
-              updateBar(); // keep keyboard focus on the checkbox: no full re-render
-            },
-          }),
+      box,
       badges(f),
     ),
     h("h3", { class: "card-title" }, f.title),
@@ -146,6 +152,38 @@ export function resultView(): HTMLElement {
   const info = rest.filter((f) => f.confidence === "info");
   const allFix = r.findings.filter((f) => f.confidence === "confirmed");
   const count = (s: string): number => allFix.filter((f) => f.severity === s).length;
+  boxes.clear();
+
+  // Quick select: tick every "thing to fix" at a severity level in one click (cut to the batch limit).
+  const pickable = [...asked, ...fix].filter((f) => f.confidence === "confirmed" && !f.carried);
+  const setSelection = (ids: string[], total: number): void => {
+    S.selected.clear();
+    for (const id of ids) S.selected.add(id);
+    for (const [id, box] of boxes) {
+      box.checked = S.selected.has(id);
+      box.closest(".card")?.classList.toggle("selected", box.checked);
+    }
+    capped = total > ids.length ? total : 0;
+    updateBar();
+  };
+  let prev = 0;
+  const quickBtns = (
+    [
+      [tr.sev.critical, ["critical"]],
+      [`${tr.sev.critical}+${tr.sev.high}`, ["critical", "high"]],
+      [tr.quickAll, ["critical", "high", "medium"]],
+    ] as [string, string[]][]
+  ).flatMap(([label, sevs]) => {
+    const p = pickBySeverity(pickable, sevs, MAX_BATCH);
+    if (p.total === prev) return []; // nothing new at this level
+    prev = p.total;
+    return [h("button", { class: "btn", type: "button", onclick: () => setSelection(p.ids, p.total) }, `${label} ${p.total}`)];
+  });
+  const capNote = h("span", { class: "muted small", "aria-live": "polite" });
+  const quick =
+    pickable.length > 1
+      ? h("div", { class: "quick" }, h("span", { class: "muted small" }, tr.quick), quickBtns, h("button", { class: "btn", type: "button", onclick: () => setSelection([], 0) }, tr.quickClear), capNote)
+      : null;
 
   if (S.st!.key !== "none" && S.tracked === null && r.findings.some((f) => f.rule_id === "vulnerable-deps" && cves(f).length)) {
     S.tracked = new Map();
@@ -182,6 +220,7 @@ export function resultView(): HTMLElement {
 
   const empty = emptyState();
   if (empty) root.append(empty);
+  if (quick) root.append(quick);
   if (r.compare?.baseline === "fix_request" && r.compare.requested.length) {
     root.append(...requestedHead(asked.length), h("div", { class: "cards" }, asked.map((f) => card(f, rerender))));
     if (rest.length) root.append(h("h2", { class: "sec others" }, t().recheck.others));
@@ -197,12 +236,12 @@ export function resultView(): HTMLElement {
   const bar = h("div", { class: "bar", role: "region", "aria-label": tr.rescan });
   updateBar = () => {
     const n = S.selected.size;
+    capNote.textContent = capped && n <= MAX_BATCH ? tr.quickCapped(capped, n) : "";
     replace(
       bar,
       n ? h("span", { "aria-live": "polite" }, tr.selected(n)) : null,
       n ? h("button", { class: "btn primary", type: "button", disabled: n > MAX_BATCH, onclick: () => void fixDialog([...S.selected]) }, tr.batch(n)) : null,
-      n > MAX_BATCH ? h("span", { class: "warn small" }, tr.batchMax(MAX_BATCH)) : null,
-      h("span", { class: "grow" }),
+      n > MAX_BATCH ? h("span", { class: "warn small" }, tr.batchMax(MAX_BATCH)) : null,      h("span", { class: "grow" }),
       h("button", { class: "btn primary", type: "button", onclick: () => void startScan() }, tr.rescan),
     );
   };

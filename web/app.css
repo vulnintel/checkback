@@ -188,6 +188,7 @@ label.btn { user-select: none; }
 .summary { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; margin-bottom: 8px; }
 .summary-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .sev-line { display: flex; gap: 8px; }
+.quick { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 14px 0 4px; }
 h2.sec { font-size: 17px; }
 .cards { display: flex; flex-direction: column; gap: 10px; }
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; }

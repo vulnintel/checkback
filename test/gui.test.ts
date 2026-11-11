@@ -10,6 +10,7 @@ import { startGui, type GuiServer } from "../src/gui/server.js";
 import { createMcpHandler, readSnapshot } from "../src/index.js";
 import { emptyKind } from "../web/src/empty.js";
 import { DICTS } from "../web/src/i18n.js";
+import { pickBySeverity } from "../web/src/pick.js";
 import { consentedAppDir, K, mockNet, project, tempDir } from "./helpers.js";
 
 const servers: GuiServer[] = [];
@@ -255,6 +256,15 @@ describe("AC39 'no problems' vs 'nothing to check' vs 'no lock'", () => {
     expect(emptyKind({ findings: [{ confidence: "review" }], stats: { files: 3 }, locks: [] })).toBeNull();
     const ko = DICTS.ko.result;
     expect(new Set([ko.cleanTitle, ko.noLockTitle, ko.nothingTitle]).size).toBe(3);
+  });
+
+  it("quick select picks by severity, most severe first, cut to the batch limit", () => {
+    const f = (id: string, severity: string) => ({ id, severity });
+    const all = [f("m1", "medium"), f("h1", "high"), f("c1", "critical"), f("h2", "high")];
+    expect(pickBySeverity(all, ["critical"], 10)).toEqual({ ids: ["c1"], total: 1 });
+    expect(pickBySeverity(all, ["critical", "high"], 10)).toEqual({ ids: ["c1", "h1", "h2"], total: 3 });
+    expect(pickBySeverity(all, ["critical", "high", "medium"], 2)).toEqual({ ids: ["c1", "h1"], total: 4 });
+    expect(pickBySeverity([], ["critical"], 10)).toEqual({ ids: [], total: 0 });
   });
 });
 

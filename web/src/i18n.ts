@@ -86,6 +86,10 @@ const ko = {
     selected: (n: number) => `${n}개 선택`,
     batch: (n: number) => `선택한 ${n}개 수정 지시문`,
     batchMax: (m: number) => `한 번에 최대 ${m}개까지 고를 수 있습니다.`,
+    quick: "빠른 선택",
+    quickAll: "전체",
+    quickClear: "선택 해제",
+    quickCapped: (total: number, n: number) => `고칠 일 ${total}개 중 심각도 높은 순으로 ${n}개를 골랐습니다. 나머지는 다음 차례에 고르세요.`,
     select: (t: string) => `선택: ${t}`,
     reason: {
       disabled: "꺼짐",
@@ -420,6 +424,10 @@ const en: Dict = {
     selected: (n: number) => `${n} selected`,
     batch: (n: number) => `Fix prompt for ${n} selected`,
     batchMax: (m: number) => `You can pick up to ${m} at a time.`,
+    quick: "Quick select",
+    quickAll: "All",
+    quickClear: "Clear",
+    quickCapped: (total: number, n: number) => `Picked the ${n} most severe of ${total} things to fix. Pick the rest in the next round.`,
     select: (t: string) => `Select: ${t}`,
     reason: {
       disabled: "Off",
