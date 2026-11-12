@@ -367,6 +367,16 @@ describe("AC11 env-committed", () => {
     expect(byRule(r, "env-committed")).toMatchObject([{ confidence: "info", notes: ["public_values_only"] }]);
     expect(byRule(r, "gitignore-env-missing")).toMatchObject([{ severity: "high", confidence: "confirmed" }]);
   });
+
+  it("gitignore-env-missing: a rule line that leaves an untracked .env out is still a finding", async () => {
+    const files = { ".env": "A=1\n", ".env.local": "B=2\n", "a.ts": "" };
+    const partial = gitRepo(project({ ...files, ".gitignore": "node_modules\n.env*.local\n" }));
+    expect(byRule(await scanDefault(partial), "gitignore-env-missing")).toMatchObject([{ severity: "high", confidence: "confirmed" }]);
+    const covered = gitRepo(project({ ...files, ".gitignore": "node_modules\n.env\n.env*.local\n" }));
+    expect(byRule(await scanDefault(covered), "gitignore-env-missing")).toEqual([]);
+    const localOnly = gitRepo(project({ ".env.local": "B=2\n", ".gitignore": ".env*.local\n" }));
+    expect(byRule(await scanDefault(localOnly), "gitignore-env-missing")).toEqual([]);
+  });
 });
 
 describe("AC71 local-only .env*", () => {

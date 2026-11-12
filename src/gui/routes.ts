@@ -6,10 +6,10 @@
 import { realpath } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { apiKeyOf, CONSENT_VERSION, hasConsent, projectKey, readConfig, readJson, updateConfig, writeJson, type LocalConfig } from "../appdata.js";
-import { BUILTIN_NAMES, KIND_TEXT } from "../builtins/text.js";
+import { BUILTIN_NAMES, findingDescription, KIND_TEXT } from "../builtins/text.js";
 import { registerCves, registeredCves, subscribePackages, trackRows, watchCandidates } from "../commands.js";
 import { readInventory } from "../deps/inventory.js";
-import { buildSbom } from "../deps/sbom.js";
+import { buildSbom, inSbom, purlOf } from "../deps/sbom.js";
 import { addIgnore, listIgnores, removeIgnore } from "../ignores.js";
 import { ViBudget } from "../net/budget.js";
 import { defaultHttp, VERSION, type Fetch } from "../net/http.js";
@@ -53,7 +53,7 @@ function ruleName(rule: Rule | undefined, f: { rule_id: string; kind?: string },
 }
 
 function describe(rule: Rule | undefined, f: Finding, lang: Lang): string {
-  return pick(rule && "description" in rule ? rule.description : undefined, lang) ?? pick(KIND_TEXT[`${f.rule_id}/${f.kind}`]?.description, lang) ?? "";
+  return pick(rule && "description" in rule ? rule.description : undefined, lang) ?? findingDescription(f, lang) ?? "";
 }
 
 /** The GUI finding: engine fields minus the keyed value hash, plus localized rule texts. */
@@ -111,6 +111,7 @@ export function createRoutes(ctx: GuiContext): { routes: Record<string, Route>; 
         folder: basename(cwd),
         folder_path: cwd,
         lang,
+        theme: c.theme ?? "system",
         consent: hasConsent(c),
         declined,
         key: process.env.VULNINTEL_API_KEY ? "env" : c.api_key ? "config" : "none",
@@ -136,6 +137,8 @@ export function createRoutes(ctx: GuiContext): { routes: Record<string, Route>; 
     async "POST /api/settings"(b) {
       const patch: Partial<LocalConfig> = {};
       if (b.lang === "ko" || b.lang === "en") patch.lang = b.lang;
+      if (b.theme === "light" || b.theme === "dark") patch.theme = b.theme;
+      else if (b.theme === "system") patch.theme = undefined; // dropped from the file: follow the OS again
       if (typeof b.external === "object" && b.external !== null) {
         const e = b.external as Record<string, unknown>;
         const c = await cfg();
@@ -230,11 +233,14 @@ export function createRoutes(ctx: GuiContext): { routes: Record<string, Route>; 
           compare: {
             ...cmp,
             requested: cmp.requested ?? [],
-            resolved: cmp.resolved.map((x) => ({
-              ...x,
-              title: tpl.rules.some((y) => y.id === x.rule_id) ? name(x.rule_id) : x.title, // stored title is in the scan's language
-              ...(x.confirm_revocation && { revoked: revoked.has(x.id) }),
-            })),
+            resolved: cmp.resolved.map((x) => {
+              const rule = tpl.rules.find((y) => y.id === x.rule_id);
+              return {
+                ...x,
+                title: rule ? ruleName(rule, x, lang) : x.title, // same text as the card title; stored title is in the scan's language
+                ...(x.confirm_revocation && { revoked: revoked.has(x.id) }),
+              };
+            }),
           },
         }),
       };
@@ -313,7 +319,8 @@ export function createRoutes(ctx: GuiContext): { routes: Record<string, Route>; 
       return {
         json,
         components: (JSON.parse(json) as { components?: unknown[] }).components?.length ?? 0,
-        locks: inv.lockfiles.map((l) => ({ path: l.path, kind: l.kind, packages: l.packages.length })),
+        // per lock: the components that lock contributes (same rule as buildSbom)
+        locks: inv.lockfiles.map((l) => ({ path: l.path, kind: l.kind, packages: new Set(l.packages.filter(inSbom).map(purlOf)).size })),
       };
     },
 

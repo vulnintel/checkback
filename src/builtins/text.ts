@@ -1,4 +1,4 @@
-import type { LocalizedText } from "../types.js";
+import type { Finding, Lang, LocalizedText } from "../types.js";
 
 // Titles, plain-language descriptions and fix instructions for builtin judgments (§7-1~7-3).
 // Fix texts follow §6-3: no install/add instructions, no alternative package names.
@@ -11,6 +11,8 @@ export interface KindText {
   fixUv?: LocalizedText;
   /** "Human first" step for the fix prompt (key rotation etc.). */
   human?: LocalizedText;
+  /** Description and fix naming the item's own {table} / {policy}; used when the finding carries `table`. */
+  named?: { description: LocalizedText; fix: LocalizedText };
 }
 
 const LOCK_RULE = {
@@ -105,6 +107,16 @@ export const KIND_TEXT: Record<string, KindText> = {
       ko: "새 마이그레이션에서 이 테이블에 alter table ... enable row level security 를 추가하고, 필요한 접근만 허용하는 정책을 만드세요.",
       en: "In a new migration, add alter table ... enable row level security for this table and create policies that allow only the access you need.",
     },
+    named: {
+      description: {
+        ko: "저장소 마이그레이션 기준으로 {table} 테이블에 행 수준 보안(RLS)이 켜져 있지 않습니다. anon 키로 누구나 읽고 쓸 수 있습니다.",
+        en: "According to the migrations in this repository, Row Level Security is not enabled on the {table} table. Anyone with the anon key can read and write it.",
+      },
+      fix: {
+        ko: "새 마이그레이션에서 alter table {table} enable row level security 를 추가하고, {table} 테이블에 필요한 접근만 허용하는 정책을 만드세요.",
+        en: "In a new migration, add alter table {table} enable row level security and create policies on {table} that allow only the access you need.",
+      },
+    },
   },
   "supabase-rls/always_true_write": {
     title: { ko: "항상 허용되는 쓰기 정책", en: "Write policy that always allows" },
@@ -116,11 +128,31 @@ export const KIND_TEXT: Record<string, KindText> = {
       ko: "정책 조건을 auth.uid() 같은 실제 소유자 조건으로 바꾸는 새 마이그레이션을 만드세요.",
       en: "Write a new migration that replaces the condition with a real ownership check such as auth.uid().",
     },
+    named: {
+      description: {
+        ko: '{table} 테이블의 "{policy}" 정책 조건이 true라 누구나 데이터를 바꿀 수 있습니다(insert/update/delete).',
+        en: 'The "{policy}" policy on {table} uses true as its insert/update/delete condition, so anyone can change data.',
+      },
+      fix: {
+        ko: '{table} 테이블의 "{policy}" 정책 조건을 auth.uid() 같은 실제 소유자 조건으로 바꾸는 새 마이그레이션을 만드세요.',
+        en: 'Write a new migration that replaces the condition of the "{policy}" policy on {table} with a real ownership check such as auth.uid().',
+      },
+    },
   },
   "supabase-rls/public_read": {
     title: { ko: "모두 읽을 수 있는 정책", en: "Policy readable by everyone" },
     description: { ko: "select 정책이 using (true)입니다. 공개 읽기가 의도인지 확인하세요.", en: "A select policy uses using (true). Check that public read access is intended." },
     fix: { ko: "공개가 의도가 아니면 읽기 조건을 소유자 기준으로 좁히세요.", en: "If public read is not intended, restrict the condition to the owner." },
+    named: {
+      description: {
+        ko: '{table} 테이블의 "{policy}" select 정책이 using (true)입니다. 공개 읽기가 의도인지 확인하세요.',
+        en: 'The "{policy}" select policy on {table} uses using (true). Check that public read access is intended.',
+      },
+      fix: {
+        ko: '공개가 의도가 아니면 {table} 테이블의 "{policy}" 정책 읽기 조건을 소유자 기준으로 좁히세요.',
+        en: 'If public read is not intended, restrict the condition of the "{policy}" policy on {table} to the owner.',
+      },
+    },
   },
   "supabase-rls/migrations_elsewhere": {
     title: { ko: "다른 곳의 SQL — 실제 적용 확인 필요", en: "SQL outside supabase/migrations — check it was applied" },
@@ -275,3 +307,31 @@ export const KIND_TEXT: Record<string, KindText> = {
 };
 
 export const LOCK_HAND_EDIT = LOCK_RULE;
+
+const pickL = (t: LocalizedText | undefined, lang: Lang): string | undefined => t?.[lang] ?? t?.en ?? t?.ko;
+
+/**
+ * The kind text of a builtin finding, with `named` description/fix filled when the finding carries its
+ * table (and policy). `safe` cleans the repository names first (prompts pass their data-text filter).
+ */
+export function namedKindText(f: Pick<Finding, "rule_id" | "kind" | "table" | "policy">, safe: (s: string) => string = (s) => s): KindText | undefined {
+  const kt = KIND_TEXT[`${f.rule_id}/${f.kind}`];
+  if (!kt?.named || !f.table) return kt;
+  const v: Record<string, string> = { table: safe(f.table), policy: safe(f.policy ?? "") };
+  const fill = (t: LocalizedText): LocalizedText =>
+    Object.fromEntries(Object.entries(t).map(([l, s]) => [l, s.replace(/\{(table|policy)\}/g, (_, k: string) => v[k]!)]));
+  return { ...kt, description: fill(kt.named.description), fix: fill(kt.named.fix) };
+}
+
+const MOST_SEVERE = { ko: (id: string) => `가장 위험한 취약점 ${id}:`, en: (id: string) => `Most severe, ${id}:` };
+
+/**
+ * Description of a builtin finding for people (GUI "why it matters", terminal): the kind text with its
+ * own names, plus the VulnIntel description of a vulnerable package's most severe vulnerability.
+ * That server text is external: fix prompts and MCP use `namedKindText` only.
+ */
+export function findingDescription(f: Pick<Finding, "rule_id" | "kind" | "table" | "policy" | "vuln_description">, lang: Lang): string | undefined {
+  const d = pickL(namedKindText(f)?.description, lang);
+  const v = f.vuln_description;
+  return v ? [d, MOST_SEVERE[lang](v.id), v.text].filter(Boolean).join(" ") : d;
+}

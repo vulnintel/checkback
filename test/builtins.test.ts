@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { safeFix } from "../src/builtins/deps.js";
+import { foldIds, safeFix } from "../src/builtins/deps.js";
+import { findingDescription, namedKindText } from "../src/builtins/text.js";
+import { loadDefaultTemplate } from "../src/index.js";
+import { fixPromptText } from "../src/prompts.js";
 import { ViBudget } from "../src/net/budget.js";
 import { defaultHttp } from "../src/net/http.js";
 import { createSubscription, keyError, putRemediation, uploadSbom } from "../src/net/vulnintel.js";
@@ -55,6 +58,35 @@ describe("AC14 supabase-rls", () => {
       ["always_true_write", "high", "review"],
       ["public_read", "medium", "info"],
     ]);
+  });
+
+  it("B1: items name their table (and policy) in the description and fix prompt; ids and titles unchanged", async () => {
+    const r = await scanDefault(
+      project({
+        ...sb,
+        "supabase/migrations/001.sql": [
+          "create table public.orders (id int);",
+          "create table notes (id int);",
+          "alter table notes enable row level security;",
+          'create policy "Anyone can\nedit" on public.notes for update using (true);',
+          'create policy "read all" on notes for select using (true);',
+        ].join("\n"),
+      }),
+    );
+    const [off, write, read] = ["rls_disabled", "always_true_write", "public_read"].map((k) => byRule(r, "supabase-rls").find((f) => f.kind === k)!);
+    expect([off.table, write.table, write.policy, read.policy]).toEqual(["public.orders", "public.notes", "Anyone can edit", "read all"]);
+    expect(off.title).toBe("Table without Row Level Security");
+    expect(findingDescription(off, "ko")).toMatch(/^저장소 마이그레이션 기준으로 public\.orders 테이블에 행 수준 보안/);
+    expect(findingDescription(write, "en")).toMatch(/^The "Anyone can edit" policy on public\.notes uses true/);
+    expect(findingDescription(read, "ko")).toMatch(/^public\.notes 테이블의 "read all" select 정책/);
+    const tpl = await loadDefaultTemplate();
+    const p = fixPromptText([off], tpl, "ko").text;
+    expect(p).toContain("1) 무엇이 문제인가: 저장소 마이그레이션 기준으로 public.orders 테이블에");
+    expect(p).toContain("3) 코드 수정: 새 마이그레이션에서 alter table public.orders enable row level security 를 추가하고, public.orders 테이블에");
+    expect(fixPromptText([write], tpl, "en").text).toContain('3) Code change: Write a new migration that replaces the condition of the "Anyone can edit" policy on public.notes');
+    // A stored finding from before (no table) keeps the generic text.
+    const { table: _t, ...old } = off;
+    expect(namedKindText(old)?.description.ko).toMatch(/이 테이블에/);
   });
 
   it("SQL outside supabase/migrations lists the paths; EXECUTE format → dynamic SQL info", async () => {
@@ -287,7 +319,51 @@ describe("vulnerable-deps (§7-3)", () => {
       "https://api.vulnintelapp.com/api/v1/vulnerabilities/CVE-2021-23337?lang=ko",
       "https://api.vulnintelapp.com/api/v1/vulnerabilities/CVE-2021-44906?lang=ko",
     ]);
-    expect(v[0]!.vuln_ids).toEqual(["CVE-2021-23337", "GHSA-35jh-r3h4-6jhm"]);
+    expect(v[0]!.vuln_ids).toEqual(["CVE-2021-23337"]); // B3: the GHSA record is the same vulnerability
+  });
+
+  it("B2: the public lookup's description of the package's most severe vulnerability is kept for people, per language", async () => {
+    const pkg = {
+      "package.json": pj({ name: "a", dependencies: { lodash: "4.17.20" } }),
+      "package-lock.json": lock({ lodash: "4.17.20" }),
+    };
+    const two = {
+      osv: { "npm:lodash@4.17.20": ["GHSA-35jh-r3h4-6jhm", "GHSA-low"] },
+      vulns: {
+        ...osvMock.vulns,
+        "GHSA-low": { id: "GHSA-low", aliases: ["CVE-2020-1"], database_specific: { severity: "LOW" }, affected: [{ package: { ecosystem: "npm", name: "lodash" }, ranges: [{ events: [{ introduced: "0" }, { fixed: "4.17.21" }] }] }] },
+      },
+      npm: { lodash: {} },
+    };
+    const net = mockNet({ ...two, vi: { "CVE-2021-23337": { vpi_level: 5, is_kev: true, description: "Command\ninjection via template." }, "CVE-2020-1": { vpi_level: 2, is_kev: false, description: "Minor issue." } } });
+    const appDir = await consentedAppDir();
+    const f = byRule(await scanDefault(project(pkg), { appDir, fetch: net.fetch, now, lang: "ko" }), "vulnerable-deps")[0]!;
+    expect(f.vuln_description).toEqual({ id: "CVE-2021-23337", text: "Command injection via template." });
+    expect(findingDescription(f, "ko")).toBe("이 버전에 공개된 취약점이 있습니다. 가장 위험한 취약점 CVE-2021-23337: Command injection via template.");
+    // Not in the fix prompt (external text).
+    expect(fixPromptText([f], await loadDefaultTemplate(), "ko").text).not.toContain("Command injection");
+    // Cached in Korean: an English scan does not re-ask and shows no Korean text.
+    const en = byRule(await scanDefault(project(pkg), { appDir, fetch: net.fetch, now, lang: "en" }), "vulnerable-deps")[0]!;
+    expect(en.vuln_description).toBeUndefined();
+    // No description from the lookup → the generic sentence only.
+    const bare = mockNet({ ...two, vi: { "CVE-2021-23337": { vpi_level: 5, is_kev: true } } });
+    const g = byRule(await scanDefault(project(pkg), { appDir: await consentedAppDir(), fetch: bare.fetch, now, lang: "en" }), "vulnerable-deps")[0]!;
+    expect(g.vuln_description).toBeUndefined();
+    expect(findingDescription(g, "en")).toBe("This version has published vulnerabilities.");
+  });
+
+  it("B3: ids that alias each other are one vulnerability — CVE first, else GHSA, else the first id; every CVE kept", () => {
+    // requests 2.31.0 without a key: OSV answers with GHSA and PYSEC records of the same CVEs.
+    const ids = ["GHSA-9wx4-h78v-vm56", "GHSA-9hjg-9r4m-mvj7", "PYSEC-2024-1", "GHSA-only", "PYSEC-lone"];
+    const vulns = [
+      { id: "GHSA-9wx4-h78v-vm56", aliases: ["CVE-2024-35195"] },
+      { id: "GHSA-9hjg-9r4m-mvj7", aliases: ["CVE-2024-47081"] },
+      { id: "PYSEC-2024-1", aliases: ["GHSA-9wx4-h78v-vm56", "CVE-2024-35195"] },
+      { id: "GHSA-only", aliases: ["PYSEC-x"] },
+      { id: "GHSA-two", aliases: ["CVE-2030-1", "CVE-2030-2"] },
+    ];
+    expect(foldIds(ids, vulns)).toEqual(["CVE-2024-35195", "CVE-2024-47081", "GHSA-only", "PYSEC-lone"]);
+    expect(foldIds(["GHSA-two"], vulns)).toEqual(["CVE-2030-1", "CVE-2030-2"]);
   });
 
   it("AC26: public lookup off → no VulnIntel request, severity from OSV/CVSS; 429 → scan completes, rest marked", async () => {

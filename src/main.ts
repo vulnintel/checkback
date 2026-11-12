@@ -3,7 +3,7 @@
 // terminal, JSON otherwise or with --json; --fail-on for CI) and `sbom` (JSON).
 import { readFile } from "node:fs/promises";
 import { defaultAppDir, readConfig } from "./appdata.js";
-import { depsUncheckedWarning, failOnCount, formatScan, ignoreCommand, parseCli, trackCommand, usage, USAGE_LINE, watchCommand, type FailOn } from "./commands.js";
+import { depsUncheckedWarning, failOnCount, failOnMessage, formatScan, ignoreCommand, parseCli, trackCommand, usage, USAGE_LINE, watchCommand, type FailOn } from "./commands.js";
 import { consentCommand } from "./consent.js";
 import { buildSbom, loadDefaultTemplate, loadTemplate, readInventory, scan } from "./index.js";
 import { runStdioServer } from "./mcp.js";
@@ -61,11 +61,11 @@ if (parsed.kind === "help") {
     const failOn = opts["--fail-on"] as FailOn | undefined;
     const n = failOn ? failOnCount(r.findings, failOn) : 0;
     // Unchecked dependencies are reported, not failed: CI has no consent by design (local rules only).
-    const unchecked = failOn ? depsUncheckedWarning(r) : null;
+    const unchecked = failOn ? depsUncheckedWarning(r, lang ?? "en") : null;
     if (unchecked) process.stderr.write(`${unchecked}
 `);
     if (n > 0) {
-      process.stderr.write(`checkback: ${n} ${n === 1 ? "thing" : "things"} to fix at ${failOn === "low" ? "any severity" : `${failOn} or above`} (--fail-on ${failOn})\n`);
+      process.stderr.write(`${failOnMessage(n, failOn!, lang ?? "en")}\n`);
       process.exitCode = 1;
     }
   } else if (cmd === "sbom") {

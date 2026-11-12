@@ -26,12 +26,27 @@ export function requestedOf(c: Compare | undefined, findings: GFinding[]): GFind
   return findings.filter((f) => req.has(f.baseline_id ?? f.id));
 }
 
+/** Summary bar counts. Info items ("not a thing to fix") are left out so the bar matches the fix count. */
+export function recheckCounts(
+  findings: Pick<GFinding, "confidence" | "recheck">[],
+  resolved: Pick<ResolvedItem, "confidence">[],
+): { resolved: number; remaining: number; new: number; check: number } {
+  const n = (...s: string[]): number => findings.filter((f) => f.confidence !== "info" && s.includes(f.recheck ?? "")).length;
+  return {
+    resolved: resolved.filter((x) => x.confidence !== "info").length,
+    remaining: n("remaining", "same_key", "moved", "downgraded"),
+    new: n("new"),
+    check: n("lock_mismatch", "not_checked"),
+  };
+}
+
 function resolvedItem(x: ResolvedItem): HTMLElement {
   const rc = t().recheck;
   return h(
     "li",
     {},
     h("span", { class: "strong" }, x.title),
+    x.package ? h("span", { class: "muted" }, ` ${x.package}${x.version ? ` ${x.version}` : ""}`) : null,
     loc(x) ? h("span", { class: "loc" }, loc(x)) : null,
     x.confirm_revocation
       ? h(
@@ -61,12 +76,12 @@ export function recheckSummary(): HTMLElement | null {
   const c = r.compare;
   if (!c) return null; // first scan: nothing to compare with
   const rc = t().recheck;
-  const n = c.counts;
+  const n = recheckCounts(r.findings, c.resolved);
   const parts: [string, number, string][] = [
     [rc.resolved, n.resolved, "recheck-resolved"],
-    [rc.remaining, n.remaining + n.same_key + n.moved + n.downgraded, "recheck-remaining"],
+    [rc.remaining, n.remaining, "recheck-remaining"],
     [rc.new, n.new, "recheck-new"],
-    [rc.check, n.lock_mismatch + n.not_checked, "recheck-lock_mismatch"],
+    [rc.check, n.check, "recheck-lock_mismatch"],
   ];
   const when = ago(c.baseline_at, S.st!.lang);
   const secrets = c.resolved.some((x) => x.confirm_revocation);

@@ -146,8 +146,8 @@ rules:
       ko: Google API 키가 있습니다. Firebase 웹 설정의 키는 공개해도 되지만, Gemini 같은 유료 API 키라면 다른 사람이 요금으로 쓸 수 있습니다.
       en: A Google API key was found. Keys in a Firebase web config are meant to be public, but a key for a paid API such as Gemini can be used on your bill.
     fix_prompt:
-      ko: 이 키가 어떤 API용인지 Google Cloud 콘솔에서 확인하세요. 유료 API용이면 먼저 사람이 키를 폐기·재발급하고, 코드에서는 서버 쪽 환경변수에서 읽게 바꾸세요. 공개용이면 콘솔에서 API·도메인 제한을 거세요.
-      en: Check in the Google Cloud console which APIs this key can call. If it is for a paid API, a person first revokes and reissues it, and the code reads it from a server-side environment variable. If it is meant to be public, add API and referrer restrictions in the console.
+      ko: 이 키가 어떤 API용인지 Google Cloud 콘솔에서 확인하세요. 유료 API용이면 먼저 사람이 키를 폐기하고 새로 발급합니다. 유료 API용이면 코드에서는 서버 쪽 환경변수에서 읽게 바꾸세요. 공개용이면 콘솔에서 API·도메인 제한을 거세요.
+      en: Check in the Google Cloud console which APIs this key can call. If it is for a paid API, a person first revokes and reissues it. For a paid API, the code reads it from a server-side environment variable. If it is meant to be public, add API and referrer restrictions in the console.
 
   - id: secret-private-key
     name: { ko: 개인 키 노출, en: Private key exposed }

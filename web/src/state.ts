@@ -16,6 +16,7 @@ export interface AppState {
   folder: string;
   folder_path: string;
   lang: "ko" | "en";
+  theme: "system" | "light" | "dark";
   consent: boolean;
   declined: boolean;
   key: "none" | "env" | "config";
@@ -67,6 +68,9 @@ export interface ResolvedItem {
   rule_id: string;
   title: string;
   location: { file: string; line: number | null } | null;
+  package?: string;
+  version?: string;
+  confidence?: "confirmed" | "review" | "info";
   confirm_revocation?: true;
   revoked?: boolean;
 }
@@ -119,8 +123,22 @@ export function go(view: View): void {
 export async function refreshState(): Promise<AppState> {
   S.st = await api<AppState>("GET", "/api/state");
   setLang(S.st.lang);
+  // No attribute = the stylesheet follows the OS; "light" / "dark" pin it.
+  // shortcut: a pinned theme that differs from the OS shows the OS one until this first response; have the server stamp it into index.html if that flash bothers anyone.
+  if (S.st.theme === "system") delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = S.st.theme;
   if (!S.st.templates.some((x) => x.id === S.template)) S.template = "default";
   return S.st;
+}
+
+export async function changeTheme(theme: string): Promise<void> {
+  try {
+    await api("POST", "/api/settings", { theme });
+    await refreshState();
+  } catch (e) {
+    report(e);
+  }
+  renderer();
 }
 
 /** Language switch: server texts (titles, descriptions, notices) come back in the new language. */

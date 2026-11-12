@@ -64,7 +64,7 @@ export async function supabaseRls(ctx: BuiltinCtx): Promise<BF[]> {
   // migrations: final state after applying every file in name order
   const migs = ctx.files.filter((f) => /(^|\/)supabase\/migrations\/[^/]+\.sql$/i.test(f.rel)).sort((a, b) => (a.rel < b.rel ? -1 : 1));
   const tables = new Map<string, { file: string; line: number; rls: boolean }>();
-  const policies = new Map<string, { file: string; line: number; cmd: string; alwaysTrue: boolean; table: string; name: string }>();
+  const policies = new Map<string, { file: string; line: number; cmd: string; alwaysTrue: boolean; table: string; name: string; schema: string }>();
   const dynamic: string[] = [];
   for (const f of migs) {
     const raw = await ctx.text(f.rel);
@@ -90,10 +90,11 @@ export async function supabaseRls(ctx: BuiltinCtx): Promise<BF[]> {
     for (const m of s.matchAll(new RegExp(String.raw`\bcreate\s+policy\s+("[^"]+"|\w+)\s+on\s+${IDENT}([^;]*)`, "gi"))) {
       const name = m[1]!.replace(/"/g, "");
       const table = m[3]!.toLowerCase();
+      const schema = (m[2] ?? "public").toLowerCase();
       const body = m[4]!;
       const cmd = (/\bfor\s+(all|select|insert|update|delete)\b/i.exec(body)?.[1] ?? "all").toLowerCase();
       const alwaysTrue = /\b(using|with\s+check)\s*\(\s*true\s*\)/i.test(body);
-      ev.push({ at: m.index, fn: () => policies.set(`${table}\0${name}`, { file: f.rel, line: lineAt(raw, m.index), cmd, alwaysTrue, table, name }) });
+      ev.push({ at: m.index, fn: () => policies.set(`${table}\0${name}`, { file: f.rel, line: lineAt(raw, m.index), cmd, alwaysTrue, table, name, schema }) });
     }
     for (const m of s.matchAll(new RegExp(String.raw`\bdrop\s+policy\s+(?:if\s+exists\s+)?("[^"]+"|\w+)\s+on\s+${IDENT}`, "gi"))) {
       const key = `${m[3]!.toLowerCase()}\0${m[1]!.replace(/"/g, "")}`;
@@ -102,7 +103,7 @@ export async function supabaseRls(ctx: BuiltinCtx): Promise<BF[]> {
     for (const e of ev.sort((a, b) => a.at - b.at)) e.fn();
   }
   for (const [name, t] of tables) {
-    if (!t.rls) out.push({ rule: R, kind: "rls_disabled", severity: "high", confidence: "confirmed", file: t.file, line: t.line, value: `table:${name}` });
+    if (!t.rls) out.push({ rule: R, kind: "rls_disabled", severity: "high", confidence: "confirmed", file: t.file, line: t.line, value: `table:${name}`, extra: { table: `public.${name}` } });
   }
   for (const p of policies.values()) {
     if (!p.alwaysTrue) continue;
@@ -110,6 +111,8 @@ export async function supabaseRls(ctx: BuiltinCtx): Promise<BF[]> {
     out.push({
       rule: R, kind: write ? "always_true_write" : "public_read", severity: write ? "high" : "medium",
       confidence: write ? "review" : "info", file: p.file, line: p.line, value: `policy:${p.table}:${p.name}`,
+      // A quoted policy name may hold any text: one line, capped (shown in cards and, sanitized, in prompts).
+      extra: { table: `${p.schema}.${p.table}`, policy: p.name.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\s]+/gu, " ").trim().slice(0, 120) },
     });
   }
 

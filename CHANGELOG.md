@@ -6,7 +6,7 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-## [0.1.0] - Unreleased
+## [0.1.0] - 2026-11-12
 
 First public release.
 
@@ -25,7 +25,9 @@ First public release.
 - Plain-language fix instructions for one finding or up to 10 at once, and a read-only review
   checklist (`ai_check` items) for the user's own AI.
 - Local web screen (`npx checkback`, `--no-open`) on `127.0.0.1` with a per-run token, an HttpOnly
-  session cookie and Host/Origin checks. English and Korean.
+  session cookie and Host/Origin checks. English and Korean; light and dark, following the OS or
+  the choice in Settings. Quick select ticks every thing to fix
+  at a severity level (Critical, Critical+High, All) in one click, up to the 10-item limit.
 - MCP server over stdio (`checkback mcp`) with `scan`, `explain`, `fix_prompts`, `ai_check_prompt`
   and `export_sbom`. Responses never carry secret or masked values.
 - Claude Code plugin (one skill plus the MCP server) and the `vulnintel` plugin marketplace.
@@ -63,6 +65,18 @@ First public release.
   files under test fixtures are "to review", Markdown files are not checked for public-prefix
   secret names, a placeholder value no longer asks to revoke a key, and credentialed CORS is
   reported only for `*`, an all-origins pattern or an echoed request Origin.
+- A key that was moved instead of revoked stays "same key remains" through later fix requests,
+  until the value is gone.
+- Findings say what they are about: Supabase items name the table and policy, resolved items, the
+  ignore list and the AI checklist name the package and version, and a vulnerable package shows the
+  VulnIntel description of its most severe vulnerability. Each vulnerability is listed once (its
+  CVE instead of the CVE plus GHSA and PYSEC aliases).
+- The text report shows the re-check comparison, and `--fail-on` messages follow `--lang`.
+- Re-check counts leave out "for information" items, so they agree with the number of things to fix.
+- `.gitignore` is also reported when its rule leaves an untracked `.env` file out (for example only
+  `.env*.local` while `.env` exists).
+- Adding CVEs to the remediation tracker asks for confirmation before anything is sent.
+- Fix instructions say "revoke and reissue" once, and the lock-file warning only on dependency items.
 
 ### Security
 

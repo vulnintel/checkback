@@ -164,7 +164,7 @@ export async function scan(cwd: string, template: Template, opts: ScanOptions = 
   const snap = await readSnapshot(root, appDir);
   const base = snap ?? (await readLastScan(root, appDir));
   if (base) {
-    const r = compareWith(base, snap ? "fix_request" : "previous", findings, checked, locks, ignored);
+    const r = compareWith(base, snap ? "fix_request" : "previous", findings, checked, locks, ignored, ENGINE_VERSION);
     result.findings = r.findings.sort(byPriority);
     result.compare = r.compare;
   }
@@ -173,7 +173,8 @@ export async function scan(cwd: string, template: Template, opts: ScanOptions = 
     scan_at: result.scan_at,
     template_id: template.id,
     engine_version: ENGINE_VERSION,
-    findings: findings.map(storedFinding),
+    // Compared items (carried ones excluded): a kept "same key" verdict becomes the next baseline.
+    findings: result.findings.filter((f) => !f.carried).map(storedFinding),
     checked,
     locks,
   };
@@ -302,17 +303,20 @@ class Run {
     }
     // A .gitignore above CWD (monorepo subfolder) can cover the .env files: ask git.
     const envFiles = this.files.filter((f) => !f.build && isEnvFile(f.rel)).map((f) => f.rel);
-    const envIgnored =
-      patterns.some((r) => r.id === "gitignore-env-missing") &&
-      envFiles.length > 0 &&
-      (await this.git.ignored(envFiles)).size === envFiles.length;
+    const gitignoreRule = patterns.some((r) => r.id === "gitignore-env-missing");
+    const ignoredEnv = gitignoreRule ? await this.git.ignored(envFiles) : new Set<string>();
+    const envIgnored = gitignoreRule && envFiles.length > 0 && ignoredEnv.size === envFiles.length;
+    // A rule line exists but leaves an untracked .env file out (only `.env*.local` while `.env` exists).
+    // Tracked files are env-committed's job; outside a repo git cannot say, so the pattern decides.
+    const envUncovered = gitignoreRule && this.git.isRepo && envFiles.some((f) => !ignoredEnv.has(f) && !this.git.tracked.has(f));
     patterns.forEach((rule, k) => {
       if (over.has(k) || partial.has(k)) {
         this.checked.set(rule.id, { rule_id: rule.id, ran: true, reason: over.has(k) ? "timeout" : "timeout_partial" });
       }
       // A required pattern missing everywhere is the finding — unless a timeout makes that unknowable.
-      if (rule.mode === "require" && !requireHit.has(k) && !over.has(k) && !partial.has(k)) {
-        if (rule.id === "gitignore-env-missing" && envIgnored) return;
+      const gi = rule.id === "gitignore-env-missing";
+      if (rule.mode === "require" && (!requireHit.has(k) || (gi && envUncovered)) && !over.has(k) && !partial.has(k)) {
+        if (gi && envIgnored) return;
         this.add({
           ruleId: rule.id, title: this.title(rule.name, rule.id), file: requireSeen.get(k) ?? literalPath(rule.files[0]), line: null, valueHash: this.hv(""),
           severity: rule.severity, confidence: "confirmed", notes: [],

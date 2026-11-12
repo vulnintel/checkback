@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
-import { readFileSync, rmSync, statSync } from "node:fs";
+import { readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { addIgnore, loadDefaultTemplate, scan, type Finding, type ScanResult } from "../src/index.js";
+import { addIgnore, clearSnapshot, loadDefaultTemplate, scan, type Finding, type ScanResult } from "../src/index.js";
 import { lastScanFile, lockLooksHandEdited, recordFixRequest, snapshotFile, type LockState } from "../src/recheck.js";
 import { byRule, consentedAppDir, git, gitRepo, K, mockNet, project, tempDir } from "./helpers.js";
 
@@ -31,7 +31,7 @@ describe("AC67 recheck against the fix-request snapshot", () => {
     project({ "src/a.ts": "const a = process.env.OPENAI_API_KEY;\n", "src/c.ts": `const c = "${K.github()}";\n` }, dir);
     const r = await rescan(dir, appDir);
     expect(r.compare).toMatchObject({ baseline: "fix_request", counts: { resolved: 1, remaining: 1, new: 1 } });
-    expect(r.compare!.resolved).toEqual([{ id: base.findings.find((f) => f.location?.file === "src/a.ts")!.id, rule_id: "secret-openai", title: "OpenAI key exposed", location: { file: "src/a.ts", line: 1 }, confirm_revocation: true }]);
+    expect(r.compare!.resolved).toEqual([{ id: base.findings.find((f) => f.location?.file === "src/a.ts")!.id, rule_id: "secret-openai", title: "OpenAI key exposed", confidence: "confirmed", location: { file: "src/a.ts", line: 1 }, confirm_revocation: true }]);
     expect(status(r, "secret-openai")).toEqual([["remaining", "src/b.ts", "confirmed"]]);
     expect(status(r, "secret-github")).toEqual([["new", "src/c.ts", "confirmed"]]);
     expect(r.compare!.requested).toHaveLength(2);
@@ -62,6 +62,54 @@ describe("AC67 recheck against the fix-request snapshot", () => {
     const f = byRule(r, "secret-openai");
     expect(f).toMatchObject([{ recheck: "same_key", location: { file: ".env.local" }, confidence: "confirmed", notes: ["local_only_env"] }]);
     expect(r.compare!.counts.resolved).toBe(0);
+  });
+
+  describe("A1 a kept 'same key' verdict", () => {
+    const setup = async (): Promise<{ dir: string; appDir: string; sev: string }> => {
+      const appDir = tempDir();
+      const k = K.openai();
+      const dir = gitRepo(project({ "src/ai.ts": `const k = "${k}";\n`, "src/gh.ts": `const g = "${K.github()}";\n`, ".gitignore": ".env*.local\n" }));
+      git(dir, "add", ".");
+      git(dir, "commit", "-q", "-m", "a");
+      const sev = byRule(await baseline(dir, appDir), "secret-openai")[0]!.severity;
+      // not revoked: the same key moved into a gitignored .env.local
+      project({ "src/ai.ts": "const k = process.env.OPENAI_API_KEY;\n", ".env.local": `OPENAI_API_KEY=${k}\n` }, dir);
+      return { dir, appDir, sev };
+    };
+    const kept = (r: ScanResult, sev: string): void => {
+      expect(byRule(r, "secret-openai")).toMatchObject([{ recheck: "same_key", recheck_note: "same_key_remains", confidence: "confirmed", severity: sev, location: { file: ".env.local" } }]);
+    };
+
+    it("survives two later fix requests and a previous-scan baseline; resolved once the value is gone", async () => {
+      const { dir, appDir, sev } = await setup();
+      let r = await rescan(dir, appDir);
+      kept(r, sev);
+      for (let i = 0; i < 2; i++) {
+        await recordFixRequest(dir, byRule(r, "secret-github").map((f) => f.id), appDir, NOW);
+        r = await rescan(dir, appDir);
+        expect(r.compare!.baseline).toBe("fix_request");
+        kept(r, sev);
+      }
+      await clearSnapshot(dir, appDir);
+      r = await rescan(dir, appDir);
+      expect(r.compare!.baseline).toBe("previous");
+      kept(r, sev);
+      expect(r.compare!.counts).toMatchObject({ same_key: 1, resolved: 0 });
+      rmSync(join(dir, ".env.local"));
+      r = await rescan(dir, appDir);
+      expect(byRule(r, "secret-openai")).toEqual([]);
+      expect(r.compare!.resolved).toMatchObject([{ rule_id: "secret-openai", confidence: "confirmed", confirm_revocation: true }]);
+    });
+
+    it("is not kept across engine versions", async () => {
+      const { dir, appDir } = await setup();
+      await rescan(dir, appDir);
+      await clearSnapshot(dir, appDir);
+      const file = await lastScanFile(appDir, dir);
+      writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, "utf8")), engine_version: "0.0.0-old" }));
+      const r = await rescan(dir, appDir);
+      expect(byRule(r, "secret-openai")).toMatchObject([{ recheck: "remaining", confidence: "info" }]);
+    });
   });
 
   it("(f) CORS wildcard moved to another file → moved; (g) moved into tests/ → downgraded, keeps confirmed", async () => {
@@ -232,7 +280,7 @@ describe("AC67 recheck against the fix-request snapshot", () => {
       const net = mockNet({ osv: { "PyPI:langchain-core@0.3.34": ["GHSA-lc-0001"], "PyPI:langchain-core@1.2.22": ["GHSA-lc-0001"] }, vulns: { "GHSA-lc-0001": v } });
       const appDir = await consentedAppDir({ vulnintel: false, registry: false });
       const dir = project({ "requirements.txt": "langchain-core==0.3.34\n" });
-      await baseline(dir, appDir, net.fetch);
+      const b0 = byRule(await baseline(dir, appDir, net.fetch), "vulnerable-deps")[0]!;
       project({ "requirements.txt": "langchain-core==1.2.22\n" }, dir);
       let r = await rescan(dir, appDir, { fetch: net.fetch });
       expect(byRule(r, "vulnerable-deps")).toMatchObject([
@@ -244,6 +292,8 @@ describe("AC67 recheck against the fix-request snapshot", () => {
       project({ "requirements.txt": "langchain-core==1.3.3\n" }, dir);
       r = await rescan(dir, appDir, { fetch: net.fetch });
       expect(r.compare!.counts).toMatchObject({ resolved: 1, remaining: 0, new: 0 });
+      // A2: a resolved dependency item names its package and version
+      expect(r.compare!.resolved).toMatchObject([{ rule_id: "vulnerable-deps", package: "langchain-core", version: "0.3.34", confidence: b0.confidence }]);
       // The package is gone → resolved.
       project({ "requirements.txt": "requests==2.31.0\n" }, dir);
       r = await rescan(dir, appDir, { fetch: net.fetch });

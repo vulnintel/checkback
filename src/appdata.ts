@@ -39,6 +39,8 @@ export const CONSENT_VERSION = 1;
 export interface LocalConfig {
   consent?: { at: string; version: number };
   lang?: "ko" | "en";
+  /** GUI colors. Absent = follow the OS setting. */
+  theme?: "light" | "dark";
   /** External lookups, each on by default once consent is given (§3-1). */
   external?: { osv?: boolean; registry?: boolean; vulnintel?: boolean };
   api_key?: string;

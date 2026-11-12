@@ -3,7 +3,7 @@
 import { api, ApiFail } from "../api.js";
 import { download, extLink, h, replace, toast } from "../dom.js";
 import { LANG_NAMES, t } from "../i18n.js";
-import { changeLang, go, refreshState, report, S } from "../state.js";
+import { changeLang, changeTheme, go, refreshState, report, S } from "../state.js";
 import { dataTable } from "./start.js";
 
 function section(title: string, ...children: (Node | null)[]): HTMLElement {
@@ -29,7 +29,7 @@ export function settingsView(): HTMLElement {
   };
 
   const ignores = h("div", {}, t().loading);
-  api<{ items: { id: string; reason: string; at: string }[] }>("GET", "/api/ignores")
+  api<{ items: { id: string; reason: string; at: string; label?: string }[] }>("GET", "/api/ignores")
     .then((r) =>
       replace(
         ignores,
@@ -41,7 +41,7 @@ export function settingsView(): HTMLElement {
                 h(
                   "li",
                   { class: "row" },
-                  h("span", {}, i.reason),
+                  i.label ? h("div", {}, h("div", { class: "strong" }, i.label), h("div", {}, i.reason)) : h("span", {}, i.reason),
                   h("span", { class: "muted small" }, `${new Date(i.at).toLocaleString(st.lang)} · ${i.id.slice(0, 8)}`),
                   h("button", {
                     class: "btn link",
@@ -77,6 +77,17 @@ export function settingsView(): HTMLElement {
           onchange: (e: Event) => void changeLang((e.target as HTMLSelectElement).value),
         },
         (["ko", "en"] as const).map((l) => h("option", { value: l, selected: st.lang === l }, LANG_NAMES[l])),
+      ),
+    ),
+    section(
+      t().themeLabel,
+      h(
+        "select",
+        {
+          "aria-label": t().themeLabel,
+          onchange: (e: Event) => void changeTheme((e.target as HTMLSelectElement).value),
+        },
+        (["system", "light", "dark"] as const).map((x) => h("option", { value: x, selected: st.theme === x }, t().themeNames[x])),
       ),
     ),
     section(

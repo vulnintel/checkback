@@ -6,6 +6,8 @@ const ko = {
   by: "by VulnIntel",
   nav: { scan: "검사", templates: "템플릿", sbom: "SBOM", settings: "설정" },
   langLabel: "화면 언어",
+  themeLabel: "화면 색",
+  themeNames: { system: "시스템 설정 따름", light: "밝게", dark: "어둡게" },
   loading: "불러오는 중…",
   close: "닫기",
   cancel: "취소",
@@ -65,6 +67,7 @@ const ko = {
     reviewCount: (n: number) => `확인 필요 ${n}개`,
     infoCount: (n: number) => `참고 ${n}개`,
     meta: (when: string, tpl: string, files: number) => `${when} 검사 · 템플릿 ${tpl} · 파일 ${files.toLocaleString()}개`,
+    changeTemplate: "템플릿 바꾸기",
     aiCheck: "AI 심층 점검 지시문",
     aiCheckOff: "템플릿에서 AI 점검 항목을 켜세요",
     watch: "이 프로젝트 감시 켜기",
@@ -186,7 +189,7 @@ const ko = {
     resolved: "해결됨",
     remaining: "아직 남음",
     new: "새로 생김",
-    check: "확인 필요",
+    check: "확인 못 함",
     baseFix: (when: string, n: number) => `기준: ${when} 수정 요청 (${n}개 요청)`,
     justNow: "방금",
     basePrev: (when: string) => `기준: 직전 검사와 비교 (${when})`,
@@ -221,6 +224,7 @@ const ko = {
     reason: "사유 (필수)",
     submit: "무시하기",
     note: "무시 목록은 이 컴퓨터에만 저장되며, 설정에서 해제할 수 있습니다.",
+    done: "무시했습니다. 설정에서 해제할 수 있습니다.",
   },
 
   watch: {
@@ -244,6 +248,9 @@ const ko = {
   track: {
     done: (n: number) => `조치 대장 ${n}건 등록`,
     failed: "조치 대장에 등록하지 못했습니다.",
+    lead: "아래 CVE를 VulnIntel 조치 대장에 등록합니다.",
+    sends: (note: string) => `보내는 것: CVE ID와 메모 "${note}". VulnIntel 계정의 조치 대장에 남고, 웹에서 지웁니다.`,
+    submit: "등록",
   },
 
   templates: {
@@ -344,6 +351,8 @@ const en: Dict = {
   by: "by VulnIntel",
   nav: { scan: "Scan", templates: "Templates", sbom: "SBOM", settings: "Settings" },
   langLabel: "Language",
+  themeLabel: "Appearance",
+  themeNames: { system: "Match system", light: "Light", dark: "Dark" },
   loading: "Loading…",
   close: "Close",
   cancel: "Cancel",
@@ -403,6 +412,7 @@ const en: Dict = {
     reviewCount: (n: number) => `${n} to review`,
     infoCount: (n: number) => `${n} for information`,
     meta: (when: string, tpl: string, files: number) => `Scanned ${when} · template ${tpl} · ${files.toLocaleString()} files`,
+    changeTemplate: "Change template",
     aiCheck: "AI deep-review prompt",
     aiCheckOff: "Turn on AI check items in a template",
     watch: "Watch this project",
@@ -559,6 +569,7 @@ const en: Dict = {
     reason: "Reason (required)",
     submit: "Ignore",
     note: "The ignore list is stored on this computer only. You can undo it in Settings.",
+    done: "Ignored. You can undo it in Settings.",
   },
 
   watch: {
@@ -582,6 +593,9 @@ const en: Dict = {
   track: {
     done: (n: number) => `${n} added to the remediation tracker`,
     failed: "Could not add to the remediation tracker.",
+    lead: "These CVEs will be added to your VulnIntel remediation tracker.",
+    sends: (note: string) => `Sent: the CVE IDs and the note "${note}". They stay in the remediation tracker on your VulnIntel account; remove them on the web.`,
+    submit: "Add",
   },
 
   templates: {

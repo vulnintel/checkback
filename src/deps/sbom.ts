@@ -22,6 +22,9 @@ export function purlOf(p: { ecosystem: Package["ecosystem"]; name: string; versi
   return `pkg:${p.ecosystem === "npm" ? "npm" : "pypi"}/${name}@${encodeURIComponent(p.version)}`;
 }
 
+/** Local (workspace/file/git) and unpinned packages are not SBOM components. */
+export const inSbom = (p: Package): p is Package & { version: string } => p.origin !== "local" && p.version !== null;
+
 /**
  * CycloneDX 1.6 JSON. Deterministic (§8-3, AC31): no serialNumber, no timestamp, no project name,
  * bom-ref = purl, all lists sorted — the same inventory gives the same bytes.
@@ -34,7 +37,7 @@ export function buildSbom(inv: Inventory, opts: SbomOptions = {}): string {
   const comps = new Map<string, { p: Package & { version: string }; lockfiles: Set<string>; dev: boolean }>();
   for (const lf of inv.lockfiles) {
     for (const p of lf.packages) {
-      if (p.origin === "local" || p.version === null) continue;
+      if (!inSbom(p)) continue;
       if (allowed && !allowed.has(`${p.ecosystem}\0${p.name}\0${p.version}`)) continue;
       const purl = purlOf({ ...p, version: p.version });
       const c = comps.get(purl);

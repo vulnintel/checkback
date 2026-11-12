@@ -1,13 +1,14 @@
 // CLI parsing, help, readable scan report, --fail-on gate, and the single version source.
 
-import { readFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { request } from "node:http";
 import { describe, expect, it } from "vitest";
-import { closest, depsUncheckedWarning, failOnCount, formatScan, parseCli, usage } from "../src/commands.js";
+import { closest, depsUncheckedWarning, failOnCount, failOnMessage, formatScan, parseCli, usage } from "../src/commands.js";
 import { startGui } from "../src/gui/server.js";
 import { USER_AGENT, VERSION } from "../src/net/http.js";
-import { createMcpHandler, loadDefaultTemplate } from "../src/index.js";
-import { consentedAppDir, git, gitRepo, mockNet, project, scanDefault, tempDir } from "./helpers.js";
+import { clearSnapshot, createMcpHandler, loadDefaultTemplate, recordFixRequest } from "../src/index.js";
+import { consentedAppDir, git, gitRepo, K, mockNet, project, scanDefault, tempDir } from "./helpers.js";
 
 const NL = "\n";
 const PKG_VERSION = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version as string;
@@ -114,6 +115,13 @@ describe("failOnCount", () => {
     expect(failOnCount([...fs], "low")).toBe(2);
     expect(failOnCount([], "low")).toBe(0);
   });
+
+  it("A3: the threshold message follows --lang", () => {
+    expect(failOnMessage(7, "high")).toBe("checkback: 7 things to fix at high or above (--fail-on high)");
+    expect(failOnMessage(1, "low")).toBe("checkback: 1 thing to fix at any severity (--fail-on low)");
+    expect(failOnMessage(7, "high", "ko")).toBe("checkback: 높음 이상 고칠 일 7개 (--fail-on high)");
+    expect(failOnMessage(2, "low", "ko")).toBe("checkback: 심각도와 관계없이 고칠 일 2개 (--fail-on low)");
+  });
 });
 
 describe("formatScan", () => {
@@ -165,6 +173,7 @@ describe("formatScan", () => {
     expect(notice).toBeLessThan(out.indexOf("Next"));
     expect(out.split(NL)[3]).toMatch(/^! /); // right under the summary
     expect(depsUncheckedWarning(r)).toMatch(/dependency check did not fully run \(offline.*--fail-on does not cover it/);
+    expect(depsUncheckedWarning(r, "ko")).toMatch(/^checkback: 의존성 검사가 끝까지 실행되지 않아\(offline.*--fail-on 판정에 들어가지 않았습니다/);
     const ko = formatScan(r, await loadDefaultTemplate(), "ko", false);
     expect(ko).toContain("! 외부 조회에 실패해 의존성 검사 일부를 하지 못했습니다");
   });
@@ -195,6 +204,34 @@ describe("formatScan", () => {
     );
     expect(formatScan(r, await loadDefaultTemplate(), "ko", false)).toContain("lodash 4.17.15 → 4.17.21 이상으로 올리기");
     expect(depsUncheckedWarning(r)).toBeNull();
+  });
+
+  it("A4: re-check summary, resolved items and tags on changed states only", async () => {
+    const appDir = tempDir();
+    const [a, b, c] = [K.openai(), K.openai(), K.openai()];
+    const cwd = project({ "src/a.ts": `export const a = "${a}";\n`, "src/b.ts": `export const b = "${b}";\n`, "src/c.ts": `export const c = "${c}";\n` });
+    const tpl = await loadDefaultTemplate();
+    const first = await scanDefault(cwd, { appDir, lang: "ko" });
+    await recordFixRequest(cwd, first.findings.filter((f) => f.confidence === "confirmed").map((f) => f.id), appDir);
+    // a's key removed, b's key moved to another file, c left alone
+    writeFileSync(join(cwd, "src/a.ts"), "export const a = process.env.A;\n");
+    rmSync(join(cwd, "src/b.ts"));
+    writeFileSync(join(cwd, "src/b2.ts"), `export const b = "${b}";\n`);
+    let r = await scanDefault(cwd, { appDir, lang: "ko" });
+    const ko = formatScan(r, tpl, "ko", false);
+    expect(ko).toMatch(/\n재검사\(수정 요청 기준\): 해결됨 1 · 아직 남음 1 · 같은 키 남음 1 · 새로 생김 0\n {2}해결됨 {2}\S.* · src\/a\.ts:1\n/);
+    expect(ko).not.toContain("옮겨짐 의심");
+    expect(ko).toMatch(/긴급 {2}\S.*\[같은 키 남음\]\n {8}src\/b2\.ts:1/);
+    expect(ko.match(/\[[^\]]+\]/g)).toEqual(["[같은 키 남음]"]); // "still there" gets no tag
+    const en = formatScan(r, tpl, "en", false);
+    expect(en).toContain("Re-check (against the fix request): Resolved 1 · Still there 1 · Same key remains 1 · New 0");
+    expect(en).toContain("[Same key remains]");
+    for (const k of [a, b, c]) for (const out of [ko, en]) expect(out).not.toContain(k.slice(-6));
+    await clearSnapshot(cwd, appDir);
+    r = await scanDefault(cwd, { appDir, lang: "ko" });
+    expect(formatScan(r, tpl, "ko", false)).toContain("재검사(직전 검사 기준): 해결됨 0 · 아직 남음 2 · 같은 키 남음 0 · 새로 생김 0");
+    // no baseline → no re-check block
+    expect(formatScan(await scanDefault(cwd, { lang: "ko" }), tpl, "ko", false)).not.toContain("재검사");
   });
 
   it("clean project says so", async () => {

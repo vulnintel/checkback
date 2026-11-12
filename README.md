@@ -17,7 +17,7 @@ still there.
 
 Your code never leaves your machine. No account needed.
 
-![checkback results screen: 7 things to fix (6 critical, 1 high). The top card is Next.js 14.1.0 with known vulnerabilities, priority L5 Urgent and EPSS 99.2%, upgrade to 15.5.28 or later; then a .env file committed to git and an exposed GitHub token](docs/assets/scan-results.png)
+![checkback results screen: 14 things to fix (6 critical, 2 high, 6 medium) and a quick-select row. The top card is next 14.1.0 with known vulnerabilities, priority L5 Urgent and EPSS 99.2%, upgrade to 15.5.28 or later; then a .env file committed to git](docs/assets/scan-results.png)
 
 <sub>Demo project with fake keys. Vulnerability data from OSV.dev, priority from VulnIntel.</sub>
 
@@ -31,7 +31,8 @@ npx checkback
 
 1. Your browser opens a local page. Agree to the lookups (or decline: local rules still run).
 2. Press **Start scan**.
-3. Tick the findings you want fixed, press **Fix prompt for n selected**, copy, paste into your AI.
+3. Tick the findings you want fixed (or use **Quick select**: Critical, Critical+High, All), press
+   **Fix prompt for n selected**, copy, paste into your AI.
 4. When your AI is done, press **Scan again**.
 
 A scan waits at most 90 seconds for external lookups, then shows what it has and says what is still
@@ -119,14 +120,13 @@ flowchart LR
 section per finding with `file:line`, what is wrong and how to fix it. They never contain the secret
 value and never tell the AI to install a package that is not already in your project.
 
-![Fix prompt dialog for 5 selected findings: a "person must do first" checklist to revoke four exposed keys (two GitHub tokens, an OpenAI key, a Stripe key), then the text to paste into an AI](docs/assets/fix-prompt.png)
+![Fix prompt dialog for 5 selected findings: a "person must do first" checklist to revoke three exposed keys (an OpenAI key, a GitHub token, a Stripe key), then the text to paste into an AI](docs/assets/fix-prompt.png)
 
 **Scan again** compares with the moment you copied the instructions. In the demo below, the OpenAI
 key was moved into `.env.local` instead of being revoked, so checkback reports the same key:
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/recheck-dark.png">
-  <img alt="Re-check result: summary bar Resolved 3, Still there 5, New 0, Needs a look 0, compared with the fix request. Of the 5 requested items, a GitHub token in .env:1 is still there and an OpenAI key is marked &quot;Same key remains&quot; at .env.local:1" src="docs/assets/recheck.png">
+  <img alt="Re-check result: summary bar Resolved 3, Still there 12, New 0, Needs a look 0, compared with the fix request. Of the 5 requested items, a Stripe key in .env:5 is still there and an OpenAI key is marked &quot;Same key remains&quot; at .env.local:1" src="docs/assets/recheck.png">
 </picture>
 
 ## What it does and does not do
@@ -384,8 +384,8 @@ npx checkback scan --template my-rules.yaml
 Templates are validated on load: unknown fields, globs outside the project, slow regular
 expressions and files over 1 MB are rejected.
 
-Ignoring a finding (**Ignore** on the page, or `checkback ignore`) stores its fingerprint and your
-reason in the settings folder, never in the project. Ignored findings stay hidden after line moves,
+Ignoring a finding (**Ignore** on the page, or `checkback ignore`) stores its fingerprint, a label
+(rule title, package and `file:line`) and your reason in the settings folder, never in the project. Ignored findings stay hidden after line moves,
 in MCP results and in re-checks, until you remove them in settings.
 
 ## FAQ

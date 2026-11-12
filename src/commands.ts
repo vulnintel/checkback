@@ -14,10 +14,10 @@ import { addIgnore, listIgnores, removeIgnore } from "./ignores.js";
 import { ViBudget } from "./net/budget.js";
 import { defaultHttp, type Fetch } from "./net/http.js";
 import { createSubscription, listRemediations, putRemediation, type KeyError } from "./net/vulnintel.js";
-import { KIND_TEXT } from "./builtins/text.js";
+import { findingDescription } from "./builtins/text.js";
 import { CONSENT_HOWTO, DISCLAIMER, KEY_NOTICE, scanNotices } from "./notice.js";
 import { readLastScan } from "./recheck.js";
-import type { Finding, Lang, LocalizedText, ScanResult, Severity, Template } from "./types.js";
+import type { Finding, Lang, LocalizedText, RecheckStatus, ScanResult, Severity, Template } from "./types.js";
 
 export type TtyIO = ConsentIO;
 export interface CommandOptions {
@@ -292,7 +292,7 @@ async function ignore(io: TtyIO, o: CommandOptions & { remove?: boolean }, ask: 
       io.output.write(ko ? "무시 목록이 비어 있습니다.\n" : "The ignore list is empty.\n");
       return 1;
     }
-    io.output.write(`${list.map((e, i) => `${String(i + 1).padStart(3)}) ${e.id} · ${e.reason} · ${e.at}`).join("\n")}\n`);
+    io.output.write(`${list.map((e, i) => `${String(i + 1).padStart(3)}) ${e.label ?? e.id} · ${e.reason} · ${e.at}`).join("\n")}\n`);
     const picked = parseSelection(await ask(ko ? "해제할 번호: " : "Numbers to un-ignore: "), list.length);
     for (const i of picked) await removeIgnore(o.cwd, list[i]!.id, appDir);
     io.output.write(ko ? `${picked.length}개 해제\n` : `Removed ${picked.length}\n`);
@@ -464,7 +464,7 @@ const SEV_NAME: Record<Lang, Record<Severity, string>> = {
 function describe(f: Finding, tpl: Template, lang: Lang): string {
   const rule = tpl.rules.find((r) => r.id === f.rule_id);
   const pick = (t?: LocalizedText): string | undefined => t?.[lang] ?? t?.en ?? t?.ko;
-  const text = pick(rule && "description" in rule ? rule.description : undefined) ?? pick(KIND_TEXT[`${f.rule_id}/${f.kind}`]?.description) ?? "";
+  const text = pick(rule && "description" in rule ? rule.description : undefined) ?? findingDescription(f, lang) ?? "";
   return (text.split(/(?<=[.!?])\s+/)[0] ?? "").replace(/\{[a-z_]+\}/g, "…");
 }
 
@@ -476,10 +476,48 @@ function pkgLine(f: Finding, ko: boolean): string {
 }
 
 /** Dependency rules that did not fully run: `--fail-on` cannot vouch for them (N1). Null when they all ran. */
-export function depsUncheckedWarning(r: ScanResult): string | null {
+export function depsUncheckedWarning(r: ScanResult, lang: Lang = "en"): string | null {
   const why: string[] = [...new Set(r.checked.filter((c) => (c.rule_id === "vulnerable-deps" || c.rule_id === "hallucinated-package") && c.reason && c.reason !== "disabled").map((c) => c.reason!))];
   if (r.findings.some((f) => f.notes?.includes("priority_pending"))) why.push("priority_pending");
-  return why.length ? `checkback: the dependency check did not fully run (${why.join(", ")}), so --fail-on does not cover it; scan again with network and consent` : null;
+  if (!why.length) return null;
+  return lang === "ko"
+    ? `checkback: 의존성 검사가 끝까지 실행되지 않아(${why.join(", ")}) --fail-on 판정에 들어가지 않았습니다. 네트워크와 동의가 있는 상태에서 다시 검사하세요`
+    : `checkback: the dependency check did not fully run (${why.join(", ")}), so --fail-on does not cover it; scan again with network and consent`;
+}
+
+/** `--fail-on` threshold message (stderr). */
+export function failOnMessage(n: number, threshold: FailOn, lang: Lang = "en"): string {
+  if (lang === "ko") return `checkback: ${threshold === "low" ? "심각도와 관계없이" : `${SEV_NAME.ko[threshold as Severity]} 이상`} 고칠 일 ${n}개 (--fail-on ${threshold})`;
+  return `checkback: ${n} ${n === 1 ? "thing" : "things"} to fix at ${threshold === "low" ? "any severity" : `${threshold} or above`} (--fail-on ${threshold})`;
+}
+
+const RECHECK_NAME: Record<Lang, Record<RecheckStatus, string>> = {
+  // same wording as the GUI cards (web/src/i18n.ts card.recheck) and the README "Re-check states" table
+  ko: { resolved: "해결됨", remaining: "아직 남음", new: "새로 생김", same_key: "같은 키 남음", moved: "옮겨짐 의심", downgraded: "확신도 낮아짐", lock_mismatch: "확인 필요(lock)", not_checked: "검사 안 함" },
+  en: { resolved: "Resolved", remaining: "Still there", new: "New", same_key: "Same key remains", moved: "Possibly moved", downgraded: "Confidence lowered", lock_mismatch: "Check (lock)", not_checked: "Not checked" },
+};
+
+/** Re-check summary + resolved items for the text report; empty without a baseline. */
+function compareLines(r: ScanResult, lang: Lang): string[] {
+  const c = r.compare;
+  if (!c) return [];
+  const ko = lang === "ko";
+  const names = RECHECK_NAME[lang];
+  const always: RecheckStatus[] = ["resolved", "remaining", "same_key", "new"];
+  const extra: RecheckStatus[] = ["moved", "downgraded", "lock_mismatch", "not_checked"];
+  // Info items ("nothing to fix") are left out, like the GUI bar, so the line agrees with the fix count above it.
+  const live = r.findings.filter((f) => f.confidence !== "info");
+  const count = (s: RecheckStatus): number => (s === "resolved" ? c.resolved.filter((x) => x.confidence !== "info").length : live.filter((f) => f.recheck === s).length);
+  const shown = [...always, ...extra.filter((s) => count(s) > 0)];
+  const head = ko ? `재검사(${c.baseline === "fix_request" ? "수정 요청 기준" : "직전 검사 기준"})` : `Re-check (against ${c.baseline === "fix_request" ? "the fix request" : "the previous scan"})`;
+  return [
+    `${head}: ${shown.map((s) => `${names[s]} ${count(s)}`).join(" · ")}`,
+    ...c.resolved.map((x) => {
+      const pkg = x.package ? `${x.package}${x.version ? `@${x.version}` : ""}` : "";
+      const where = x.location ? `${x.location.file}${x.location.line ? `:${x.location.line}` : ""}` : "";
+      return `  ${names.resolved}  ${[x.title, pkg, where].filter(Boolean).join(" · ")}`;
+    }),
+  ];
 }
 
 /**
@@ -502,8 +540,9 @@ export function formatScan(r: ScanResult, tpl: Template, lang: Lang, color: bool
     const more = others.length ? (ko ? ` 외 ${others.length}곳: ` : ` +${others.length} more: `) + others.slice(0, 3).join(", ") + (others.length > 3 ? ", …" : "") : "";
     const where = f.location ? `${f.location.file}${f.location.line ? `:${f.location.line}` : ""}${more}` : "";
     const desc = describe(f, tpl, lang);
+    const tag = f.recheck && f.recheck !== "remaining" ? `  [${RECHECK_NAME[lang][f.recheck]}]` : "";
     return [
-      `  ${paint(SEV_STYLE[f.severity], names[f.severity])}${" ".repeat(width - cells(names[f.severity]))}  ${paint("bold", f.title)}`,
+      `  ${paint(SEV_STYLE[f.severity], names[f.severity])}${" ".repeat(width - cells(names[f.severity]))}  ${paint("bold", f.title)}${tag}`,
       ...(f.package ? [pad + pkgLine(f, ko)] : []),
       ...(where ? [pad + paint("dim", where)] : []),
       ...(desc ? [pad + desc] : []),
@@ -518,6 +557,8 @@ export function formatScan(r: ScanResult, tpl: Template, lang: Lang, color: bool
   // What this scan could not check goes first, so a short report is never read as "safe" (N1).
   const notices = [...(r.checked.some((c) => c.reason === "no_consent") ? [CONSENT_HOWTO[lang]] : []), ...scanNotices(r, lang)];
   if (notices.length) out.push(...notices.map((n) => paint(["bold", "yellow"], `! ${n}`)), "");
+  const cmp = compareLines(r, lang);
+  if (cmp.length) out.push(...cmp, "");
   if (fix.length) out.push(paint("bold", ko ? "고칠 일" : "To fix"), ...fix.flatMap(item), "");
   if (review.length) out.push(paint("bold", ko ? "확인 필요" : "To review"), ...review.flatMap(item), "");
   if (!fix.length && !review.length) {

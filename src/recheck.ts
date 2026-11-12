@@ -45,7 +45,17 @@ export interface Compare {
   baseline_at: string;
   counts: Record<RecheckStatus, number>;
   /** Baseline items that are gone. Secret items ask the user to confirm revocation (§7-8). */
-  resolved: { id: string; rule_id: string; title: string; location: Finding["location"]; confirm_revocation?: true }[];
+  resolved: {
+    id: string;
+    rule_id: string;
+    kind?: string;
+    title: string;
+    package?: string;
+    version?: string;
+    confidence: Confidence;
+    location: Finding["location"];
+    confirm_revocation?: true;
+  }[];
   requested?: string[];
 }
 
@@ -189,6 +199,7 @@ export function compareWith(
   checked: CheckedRule[],
   locks: LockState[],
   ignored: Set<string>,
+  engineVersion?: string,
 ): { findings: Finding[]; compare: Compare } {
   const baseFindings = base.findings.filter((f) => !ignored.has(f.id));
   const baseIds = new Set(baseFindings.map((f) => f.id));
@@ -243,6 +254,14 @@ export function compareWith(
   for (const b of baseFindings) {
     const same = byId.get(b.id);
     if (same) {
+      // A secret kept from an earlier baseline (e.g. moved to .env.local) stays a fix item across later
+      // baselines. Not across engine versions: a rule change must be able to lower a verdict.
+      if (secretish(b) && base.engine_version === engineVersion && CONF_RANK[same.confidence] > CONF_RANK[b.confidence]) {
+        mark(same, "same_key", "same_key_remains");
+        same.severity = b.severity;
+        same.confidence = b.confidence;
+        continue;
+      }
       // §7-8 "check (lock)" applies only to dependency items that disappeared; same fingerprint = "remaining".
       mark(same, "remaining", unverifiable(same) ?? lockNotRegenerated(same));
       continue;
@@ -281,7 +300,17 @@ export function compareWith(
       continue;
     }
     counts.resolved++;
-    resolved.push({ id: b.id, rule_id: b.rule_id, title: b.title, location: b.location, ...(secretish(b) && { confirm_revocation: true as const }) });
+    resolved.push({
+      id: b.id,
+      rule_id: b.rule_id,
+      ...(b.kind && { kind: b.kind }),
+      title: b.title,
+      ...(b.package && { package: b.package }),
+      ...(b.version && { version: b.version }),
+      confidence: b.confidence,
+      location: b.location,
+      ...(secretish(b) && { confirm_revocation: true as const }),
+    });
   }
   for (const f of cur) {
     if (used.has(f.id) || baseIds.has(f.id)) continue;

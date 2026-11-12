@@ -236,6 +236,30 @@ describe("AC6 (GUI) no raw secret anywhere; masked form only in the GUI API", ()
   });
 });
 
+describe("A2 / A6 resolved titles and SBOM counts", () => {
+  it("a resolved builtin item carries the card title and its confidence", async () => {
+    const appDir = tempDir();
+    const sb = { "package.json": JSON.stringify({ name: "app", dependencies: { "@supabase/supabase-js": "^2" } }) };
+    const dir = project({ ...sb, "supabase/migrations/001_init.sql": "create table public.notes (id int);\n" });
+    const { call, scanNow } = await client(await gui(dir, appDir));
+    const card = ((await scanNow()).findings as { id: string; kind?: string; title: string; confidence: string }[]).find((f) => f.kind === "rls_disabled")!;
+    expect((await call("POST", "/api/fix-request", { ids: [card.id] })).status).toBe(200);
+    writeFileSync(join(dir, "supabase/migrations/001_init.sql"), "create table public.notes (id int);\nalter table public.notes enable row level security;\n");
+    const resolved = (await scanNow()).compare.resolved as Record<string, unknown>[];
+    expect(resolved).toMatchObject([{ id: card.id, kind: "rls_disabled", title: card.title, confidence: card.confidence }]);
+  });
+
+  it("per-lock counts add up to the component count (local project entries are not components)", async () => {
+    const fx = (p: string): string => readFileSync(new URL(`./fixtures/locks/${p}`, import.meta.url), "utf8");
+    const dir = project({ "worker/pyproject.toml": fx("uv-simple/pyproject.toml"), "worker/uv.lock": fx("uv-simple/uv.lock") });
+    const { call } = await client(await gui(dir));
+    const s = (await call<{ components: number; locks: { path: string; packages: number }[] }>("GET", "/api/sbom")).json;
+    expect(s.locks.map((l) => l.path)).toEqual(["worker/uv.lock"]);
+    expect(s.components).toBeGreaterThan(0);
+    expect(s.locks[0]!.packages).toBe(s.components);
+  });
+});
+
 describe("AC39 'no problems' vs 'nothing to check' vs 'no lock'", () => {
   it("chooses three different screens from the result", async () => {
     const empty = await client(await gui(project({})));
@@ -275,6 +299,19 @@ describe("AC46 ko/en without hard-coded text", () => {
     expect(shape(DICTS.en)).toEqual(shape(DICTS.ko));
     for (const f of webSrc()) if (!f.file.endsWith("i18n.ts")) expect(f.text, f.file).not.toMatch(/[가-힣]/);
     for (const f of ["routes.ts", "server.ts"]) expect(readFileSync(join(import.meta.dirname, "..", "src", "gui", f), "utf8")).not.toMatch(/[가-힣]/);
+  });
+
+  it("theme setting: follows the OS by default, can be pinned and released", async () => {
+    const g = await gui(project({ "a.txt": "" }));
+    const { call } = await client(g);
+    const theme = async (): Promise<string> => (await call<{ theme: string }>("GET", "/api/state")).json.theme;
+    expect(await theme()).toBe("system");
+    await call("POST", "/api/settings", { theme: "dark" });
+    expect(await theme()).toBe("dark");
+    await call("POST", "/api/settings", { theme: "nope" });
+    expect(await theme()).toBe("dark");
+    await call("POST", "/api/settings", { theme: "system" });
+    expect(await theme()).toBe("system");
   });
 
   it("server texts follow the language setting; disclaimer and sources always present", async () => {
@@ -336,6 +373,8 @@ describe("first-run notice and person-only actions", () => {
     expect((await call("POST", "/api/ignore", { id, reason: "test key" })).status).toBe(200);
     expect(((await call<{ findings: { id: string }[] }>("GET", "/api/result")).json.findings).map((f) => f.id)).not.toContain(id);
     expect((await scanNow()).findings.map((f: { id: string }) => f.id)).not.toContain(id);
+    // A5: the list says what was ignored
+    expect((await call<{ items: { id: string; label?: string }[] }>("GET", "/api/ignores")).json.items).toMatchObject([{ id, label: expect.stringMatching(/ — src\/a\.ts:1$/) }]);
     await call("POST", "/api/unignore", { id });
     expect((await call<{ items: unknown[] }>("GET", "/api/ignores")).json.items).toEqual([]);
     expect((await scanNow()).findings.map((f: { id: string }) => f.id)).toContain(id);

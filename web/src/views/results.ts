@@ -7,7 +7,7 @@ import { emptyKind } from "../empty.js";
 import { t } from "../i18n.js";
 import { pickBySeverity } from "../pick.js";
 import { go, report, S, type GFinding } from "../state.js";
-import { aiCheckDialog, fixDialog, ignoreDialog, pasteToAi, trackFinding, watchDialog } from "./dialogs.js";
+import { aiCheckDialog, fixDialog, ignoreDialog, pasteToAi, trackDialog, watchDialog } from "./dialogs.js";
 import { loc, recheckSummary, requestedHead, requestedOf } from "./recheck.js";
 import { startScan } from "./start.js";
 
@@ -23,7 +23,7 @@ function badges(f: GFinding): HTMLElement {
     "div",
     { class: "badges" },
     h("span", { class: `sev sev-${f.severity}` }, t().result.sev[f.severity]),
-    f.recheck ? h("span", { class: `badge recheck-${f.recheck}` }, c.recheck[f.recheck] ?? f.recheck) : null,
+    f.recheck && !(f.confidence === "info" && f.recheck === "remaining") ? h("span", { class: `badge recheck-${f.recheck}` }, c.recheck[f.recheck] ?? f.recheck) : null,
     f.kev ? h("span", { class: "badge kev" }, c.kev) : null,
     f.vpi_level ? h("span", { class: `badge vpi vpi-${f.vpi_level}` }, c.vpi(f.vpi_level)) : null,
     typeof f.epss === "number" ? h("span", { class: "badge" }, c.epss(Math.round(f.epss * 1000) / 10)) : null,
@@ -57,7 +57,7 @@ function card(f: GFinding, rerender: () => void): HTMLElement {
         ? h("span", { class: "muted small" }, c.ghsaOnly)
         : ids.every((x) => S.tracked?.get(x))
           ? h("span", { class: "muted small" }, c.tracked)
-          : h("button", { class: "btn", type: "button", onclick: () => void trackFinding(ids, rerender) }, c.track)
+          : h("button", { class: "btn", type: "button", onclick: () => trackDialog(ids, `checkback: ${f.package}@${f.version ?? ""}`, rerender) }, c.track)
       : null;
   return h(
     "article",
@@ -76,7 +76,7 @@ function card(f: GFinding, rerender: () => void): HTMLElement {
     h(
       "div",
       { class: "card-actions" },
-      f.carried ? null : h("button", { class: "btn primary", type: "button", onclick: () => void pasteToAi([f]) }, c.paste),
+      f.carried ? null : h("button", { class: f.confidence === "info" ? "btn" : "btn primary", type: "button", onclick: () => void pasteToAi([f]) }, c.paste),
       h("button", { class: "btn", type: "button", onclick: () => detailDialog(f) }, c.details),
       f.carried ? null : h("button", { class: "btn", type: "button", onclick: () => ignoreDialog(f, rerender) }, c.ignore),
       trackBtn,
@@ -206,7 +206,16 @@ export function resultView(): HTMLElement {
         h("h1", { tabindex: "-1" }, tr.fixCount(allFix.length)),
         h("p", { class: "sev-line" }, (["critical", "high", "medium"] as const).map((s) => h("span", { class: `sev sev-${s}` }, `${tr.sev[s]} ${count(s)}`))),
         h("p", { class: "muted" }, `${tr.reviewCount(r.findings.filter((f) => f.confidence === "review").length)} · ${tr.infoCount(r.findings.filter((f) => f.confidence === "info").length)}`),
-        h("p", { class: "muted small" }, tr.meta(new Date(r.scan_at).toLocaleString(S.st!.lang), r.template.name, r.stats.files)),
+        h(
+          "p",
+          { class: "muted small" },
+          tr.meta(new Date(r.scan_at).toLocaleString(S.st!.lang), r.template.name, r.stats.files),
+          " ",
+          h("button", { class: "btn link", type: "button", onclick: () => {
+            if (S.st!.templates.some((x) => x.id === r.template.id)) S.template = r.template.id; // start screen opens on the template of this result
+            go("start");
+          } }, tr.changeTemplate),
+        ),
       ),
       h(
         "div",

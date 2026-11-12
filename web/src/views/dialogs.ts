@@ -5,6 +5,7 @@ import { api, ApiFail } from "../api.js";
 import { copyText, extLink, h, modal, replace, toast } from "../dom.js";
 import { t } from "../i18n.js";
 import { go, report, S, type GFinding, type ScanView } from "../state.js";
+import { loc } from "./recheck.js";
 
 interface FixPrompt {
   text: string;
@@ -134,7 +135,11 @@ export function ignoreDialog(f: GFinding, done: () => void): void {
   const input = h("input", { id: "ignore-reason", type: "text", maxlength: 500, required: true });
   const d = modal(
     i.title,
-    [h("p", { class: "strong" }, f.title), h("div", { class: "field" }, h("label", { for: "ignore-reason" }, i.reason), input), h("p", { class: "muted small" }, i.note)],
+    [
+      h("p", { class: "strong" }, f.title),
+      f.package ? h("p", { class: "card-pkg" }, `${f.package}${f.version ? `@${f.version}` : ""}`) : null,
+      loc(f) ? h("p", { class: "loc" }, loc(f)) : null,
+      h("div", { class: "field" }, h("label", { for: "ignore-reason" }, i.reason), input), h("p", { class: "muted small" }, i.note)],
     [
       h("button", {
         class: "btn primary",
@@ -148,6 +153,7 @@ export function ignoreDialog(f: GFinding, done: () => void): void {
             S.selected.delete(f.id);
             d.close();
             done();
+            toast(i.done);
           } catch (e) {
             report(e);
           }
@@ -234,7 +240,20 @@ export async function watchDialog(): Promise<void> {
   void d;
 }
 
-export async function trackFinding(cves: string[], done: () => void): Promise<void> {
+/** Card [Add to remediation tracker]: show what goes to the account before anything is sent. */
+export function trackDialog(cves: string[], note: string, done: () => void): void {
+  const k = t().track;
+  const d = modal(
+    t().card.track,
+    [h("p", {}, k.lead), h("ul", { class: "plain" }, cves.map((c) => h("li", { class: "loc" }, c))), h("p", { class: "note" }, k.sends(note))],
+    [
+      h("button", { class: "btn", type: "button", onclick: () => d.close() }, t().cancel),
+      h("button", { class: "btn primary", type: "button", onclick: () => (d.close(), void trackFinding(cves, done)) }, k.submit),
+    ],
+  );
+}
+
+async function trackFinding(cves: string[], done: () => void): Promise<void> {
   try {
     const r = await api<{ registered: number; error?: string }>("POST", "/api/track", { cves });
     if (r.error) toast(t().track.failed);

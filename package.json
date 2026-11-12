@@ -46,6 +46,7 @@
     "web/index.html",
     "web/app.css",
     "web/favicon.svg",
+    "web/fonts",
     "NOTICE",
     "licenses"
   ],

@@ -65,6 +65,14 @@ export interface Finding {
    * it. The fix prompt picks the package-manager command from it.
    */
   dependency?: { direct: boolean; manifest?: string; section?: string; other_majors?: boolean };
+  /** supabase-rls: the table the item is about ("public.orders") and, for policy items, the policy name (repository text). */
+  table?: string;
+  policy?: string;
+  /**
+   * vulnerable-deps: VulnIntel public lookup's description of the package's most severe vulnerability
+   * (external text in the scan's language; for people only — never in a fix prompt or MCP).
+   */
+  vuln_description?: { id: string; text: string };
   /** Recheck status vs the baseline (§7-8). */
   recheck?: RecheckStatus;
   recheck_note?: string;

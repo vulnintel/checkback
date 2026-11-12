@@ -348,7 +348,7 @@ export async function depsBuiltins(ctx: BuiltinCtx, d: DepsInput): Promise<DepsO
     }
   }
   await enriching;
-  for (const p of vulnPkgs) out.push(vulnFinding(p, inv));
+  for (const p of vulnPkgs) out.push(vulnFinding(p, inv, net?.lang));
   return { findings: out, vuln, hall, ...(viStatus && { vulnintel: viStatus }) };
 }
 
@@ -390,7 +390,9 @@ async function enrich(pkgs: VulnPkg[], net: NetCtx, now: number): Promise<void> 
       }
       calls++;
       if (r.ok) {
-        v.vi = { kev: r.value.is_kev, vpi: r.value.vpi_level, epss: r.value.epss, cvss: r.value.cvss };
+        // The description is the only language-dependent field: kept per language, never re-asked for the other one.
+        const text = r.value.description?.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\s]+/gu, " ").trim().slice(0, 1000);
+        v.vi = { kev: r.value.is_kev, vpi: r.value.vpi_level, epss: r.value.epss, cvss: r.value.cvss, ...(text && { desc: { [net.lang]: text } }) };
         net.caches.vi.set(id, v.vi, now);
       } else if (r.reason === "not_found") net.caches.vi.set(id, null, now);
       else {
@@ -477,6 +479,8 @@ interface ViInfo {
   vpi: number | null;
   epss: number | null;
   cvss: number | null;
+  /** Public lookup description by language (B2). */
+  desc?: Partial<Record<Lang, string>>;
 }
 
 interface Detail {
@@ -567,7 +571,38 @@ function vulnSeverity(v: Detail): { sev: Severity; known: boolean } {
 const baseSeverity = (p: VulnPkg): Severity => p.vulns.map((v) => vulnSeverity({ ...v, vi: undefined, kev: undefined }).sev).sort((a, b) => sevRank(a) - sevRank(b))[0] ?? "medium";
 const topCvss = (p: VulnPkg): number => Math.max(0, ...p.vulns.map((v) => v.cvss ?? 0));
 
-function vulnFinding(p: VulnPkg, inv: Inventory): BF {
+/**
+ * B3: one id per vulnerability. OSV lists one vulnerability as several records (GHSA, PYSEC, …) that
+ * alias each other and a CVE: ids joined through aliases are one vulnerability, shown by its CVE (all of
+ * them, so the CVE list `track` reads stays the same), else its GHSA, else its first id.
+ */
+export function foldIds(ids: string[], vulns: Pick<Detail, "id" | "aliases">[]): string[] {
+  const up = new Map<string, string>();
+  const root = (x: string): string => {
+    while (up.has(x)) x = up.get(x)!;
+    return x;
+  };
+  const join = (a: string, b: string): void => {
+    const [ra, rb] = [root(a), root(b)];
+    if (ra !== rb) up.set(ra, rb);
+  };
+  for (const v of vulns) for (const a of v.aliases) join(v.id, a);
+  const groups = new Map<string, string[]>();
+  for (const x of new Set([...ids, ...vulns.flatMap((v) => [v.id, ...v.aliases])])) groups.set(root(x), [...(groups.get(root(x)) ?? []), x]);
+  const keep = new Set(ids.map(root));
+  return [...groups].flatMap(([r, m]) => {
+    if (!keep.has(r)) return [];
+    const s = m.sort();
+    const cves = s.filter((x) => x.startsWith("CVE-"));
+    return cves.length ? cves : [s.find((x) => x.startsWith("GHSA-")) ?? s[0]!];
+  }).sort();
+}
+
+/** Most severe first: §7-3 severity, then VPI, then CVSS. */
+const bySeverity = (a: Detail, b: Detail): number =>
+  sevRank(vulnSeverity(a).sev) - sevRank(vulnSeverity(b).sev) || (b.vi?.vpi ?? 0) - (a.vi?.vpi ?? 0) || (b.cvss ?? b.vi?.cvss ?? 0) - (a.cvss ?? a.vi?.cvss ?? 0);
+
+function vulnFinding(p: VulnPkg, inv: Inventory, lang?: Lang): BF {
   const { t } = p;
   const notes: NoteCode[] = [];
   // N4: the §7-3 VPI mapping applies once every ID of the package has its priority. Until then the
@@ -585,7 +620,9 @@ function vulnFinding(p: VulnPkg, inv: Inventory): BF {
   const fix = pickFix(fixCandidates(p).filter((c) => p.asked?.get(c) !== false), t.version!);
   if (fix && major(fix) !== major(t.version!)) notes.push("major_upgrade");
   if (fix && p.asked?.get(fix) !== true) notes.push("fix_unverified");
-  const ids = [...new Set(p.ids.map((v) => v.id).concat(p.vulns.flatMap((v) => v.aliases.filter((a) => a.startsWith("CVE-")))))].sort();
+  const ids = foldIds(p.ids.map((v) => v.id), p.vulns);
+  // B2: the most severe vulnerability that has a VulnIntel description in the scan's language.
+  const described = lang ? p.vulns.filter((v) => v.vi?.desc?.[lang]).sort(bySeverity)[0] : undefined;
   const max = (xs: (number | null | undefined)[]): number | undefined => {
     const n = xs.filter((x): x is number => typeof x === "number");
     return n.length ? Math.max(...n) : undefined;
@@ -614,6 +651,7 @@ function vulnFinding(p: VulnPkg, inv: Inventory): BF {
       source: p.fromVulnIntel || p.vulns.some((v) => v.vi) ? "vulnintel" : "osv",
       ...(t.sources.length > 1 && { related: t.sources }),
       ...(dependency && { dependency }),
+      ...(described && { vuln_description: { id: described.aliases.find((a) => a.startsWith("CVE-")) ?? described.id, text: described.vi!.desc![lang!]! } }),
     },
   };
 }
