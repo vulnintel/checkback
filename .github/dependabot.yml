@@ -7,6 +7,10 @@ updates:
     cooldown:
       default-days: 7 # let new releases age a week before proposing them
     open-pull-requests-limit: 5
+    ignore:
+      # Types track the oldest supported Node (engines >=20.18), not the newest.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
     groups:
       dev-dependencies:
         dependency-type: development
