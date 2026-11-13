@@ -1,5 +1,7 @@
 # checkback
 
+English · [한국어](https://github.com/vulnintel/checkback/blob/main/README.ko.md) · [简体中文](https://github.com/vulnintel/checkback/blob/main/README.zh-CN.md)
+
 **Find the security mistakes AI coding tools leave behind, hand the fixes back to your AI, then check again.**
 
 [![CI](https://github.com/vulnintel/checkback/actions/workflows/ci.yml/badge.svg)](https://github.com/vulnintel/checkback/actions/workflows/ci.yml)
@@ -34,6 +36,8 @@ npx checkback
 3. Tick the findings you want fixed (or use **Quick select**: Critical, Critical+High, All), press
    **Fix prompt for n selected**, copy, paste into your AI.
 4. When your AI is done, press **Scan again**.
+
+The page and the terminal reports are available in English, 한국어 and 简体中文.
 
 A scan waits at most 90 seconds for external lookups, then shows what it has and says what is still
 pending; the next scan continues from the cache. The public priority lookup (KEV, VPI, EPSS) runs
@@ -221,7 +225,7 @@ or the settings page.
 |---|---|
 | `checkback` / `checkback gui` | Start the local page and open the browser |
 | `checkback --no-open` | Same, print the URL only |
-| `checkback scan [--lang en\|ko] [--template file.yaml] [--json\|--text] [--fail-on severity]` | Scan the current folder. In a terminal: a readable report (summary by severity, each finding with file:line and a one-line description). Piped or in CI: JSON. `--json` / `--text` force one. Never prints key values or masked values |
+| `checkback scan [--lang en\|ko\|zh] [--template file.yaml] [--json\|--text] [--fail-on severity]` | Scan the current folder. In a terminal: a readable report (summary by severity, each finding with file:line and a one-line description). Piped or in CI: JSON. `--json` / `--text` force one. Never prints key values or masked values |
 | `checkback sbom [--upload-preview]` | Print a CycloneDX JSON SBOM of locked dependencies. `--upload-preview` prints the form a VulnIntel key would send (private packages removed) and uploads nothing; `--upload` is an old alias |
 | `checkback mcp` | Run the MCP server over stdio |
 | `checkback consent` | Agree to external lookups in a terminal. Interactive only |

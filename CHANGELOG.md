@@ -6,6 +6,21 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-13
+
+### Added
+
+- Simplified Chinese (`zh`, 简体中文) everywhere English and Korean are: the web screen, `scan --text
+  --lang zh`, fix prompts, the AI review checklist, MCP output, built-in rule texts and the default
+  template, and the consent and notice texts. A system locale starting with `zh` picks it by
+  default. User templates may add an optional `zh` text; without one, Chinese falls back to English.
+- README in Korean (`README.ko.md`) and Simplified Chinese (`README.zh-CN.md`); the npm package
+  description is in English, Korean and Chinese.
+
+### Fixed
+
+- The `bin` path no longer triggers npm's "auto-corrected package.json" warning on publish.
+
 ## [0.1.0] - 2026-11-12
 
 First public release.

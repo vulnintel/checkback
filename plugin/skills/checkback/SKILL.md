@@ -1,6 +1,6 @@
 ---
 name: checkback
-description: Security check for this project with checkback — leaked keys, committed .env/key files, Supabase/Firebase rules, CORS, debug settings, vulnerable/malicious/missing packages — then fix with the user's approval and re-check. Use when the user asks for a security check, "보안 점검해줘", or to re-check findings after fixes.
+description: Security check for this project with checkback — leaked keys, committed .env/key files, Supabase/Firebase rules, CORS, debug settings, vulnerable/malicious/missing packages — then fix with the user's approval and re-check. Use when the user asks for a security check, "보안 점검해줘", "帮我做一次安全检查", or to re-check findings after fixes.
 ---
 
 # checkback security check

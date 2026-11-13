@@ -1,3 +1,4 @@
+import type { Lang } from "../types.js";
 import type { ViBudget } from "./budget.js";
 import { NetError, requestJson, type Http } from "./http.js";
 
@@ -16,7 +17,7 @@ export interface PublicVuln {
 export type ViResult<T> = { ok: true; value: T } | { ok: false; reason: "budget" | "not_found" | "rate_limited" | "offline" | "error" };
 
 /** §8-4 public lookup (no key). Consumes one budget slot; 429 blocks the shared bucket for a minute. */
-export async function publicLookup(http: Http, budget: ViBudget, id: string, lang: "ko" | "en"): Promise<ViResult<PublicVuln>> {
+export async function publicLookup(http: Http, budget: ViBudget, id: string, lang: Lang): Promise<ViResult<PublicVuln>> {
   if (!(await budget.take("public"))) return { ok: false, reason: "budget" };
   try {
     const r = await requestJson<{ data?: Record<string, unknown> }>(http, `${VI_API}/vulnerabilities/${encodeURIComponent(id)}?lang=${lang}`);

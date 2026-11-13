@@ -327,6 +327,14 @@ describe("AC46 ko/en without hard-coded text", () => {
     expect(ko.disclaimer).toMatch(/통과는 '안전'이 아닙니다/);
     expect(ko.data_table).not.toBe(en.data_table);
     expect(DICTS.ko.result.upsell).toMatch(/새 취약점/);
+    await call("POST", "/api/settings", { lang: "zh" });
+    const zh = (await call<{ lang: string; disclaimer: string; data_table: string; links: { key: string } }>("GET", "/api/state")).json;
+    expect(zh.lang).toBe("zh");
+    expect(zh.disclaimer).toMatch(/通过检查不等于“安全”/);
+    expect(zh.data_table).toMatch(/^\[数据传输\]/);
+    expect(zh.links.key).toBe("https://www.vulnintelapp.com/zh/settings/api-keys?src=checkback");
+    await call("POST", "/api/settings", { lang: "ja" }); // unknown languages are ignored
+    expect((await call<{ lang: string }>("GET", "/api/state")).json.lang).toBe("zh");
   });
 
   it("finding titles and descriptions follow the current language, not the scan's", async () => {

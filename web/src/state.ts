@@ -1,7 +1,7 @@
 // Screen state shared by the views. Server data only: the API is the source of truth.
 
 import { api, ApiFail } from "./api.js";
-import { setLang, t } from "./i18n.js";
+import { setLang, t, type UiLang } from "./i18n.js";
 import { toast } from "./dom.js";
 
 export interface TemplateInfo {
@@ -15,7 +15,7 @@ export interface AppState {
   version: string;
   folder: string;
   folder_path: string;
-  lang: "ko" | "en";
+  lang: UiLang;
   theme: "system" | "light" | "dark";
   consent: boolean;
   declined: boolean;

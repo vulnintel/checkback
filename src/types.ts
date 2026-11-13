@@ -1,7 +1,11 @@
 export type Severity = "critical" | "high" | "medium";
 export type Confidence = "confirmed" | "review" | "info";
-export type Lang = "ko" | "en";
-export type LocalizedText = { ko?: string; en?: string };
+export type Lang = "ko" | "en" | "zh";
+export const LANGS: readonly Lang[] = ["ko", "en", "zh"];
+/** Text from users or imported templates: any language may be missing (zh falls back to en, then ko). */
+export type LocalizedText = { ko?: string; en?: string; zh?: string };
+/** Builtin text shipped with the engine: every language is required. */
+export type FullText = Record<Lang, string>;
 
 /** Extra facts the GUI/generator turns into localized text. */
 export type NoteCode =

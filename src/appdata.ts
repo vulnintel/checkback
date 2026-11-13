@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { sha256 } from "./secrets.js";
+import type { Lang } from "./types.js";
 
 /** `<appdata>/checkback` — never inside the scanned project. */
 export function defaultAppDir(): string {
@@ -38,7 +39,7 @@ export const CONSENT_VERSION = 1;
 /** `<appdata>/checkback/config.json` — shared by GUI, MCP and CLI. Written with mode 600. */
 export interface LocalConfig {
   consent?: { at: string; version: number };
-  lang?: "ko" | "en";
+  lang?: Lang;
   /** GUI colors. Absent = follow the OS setting. */
   theme?: "light" | "dark";
   /** External lookups, each on by default once consent is given (§3-1). */

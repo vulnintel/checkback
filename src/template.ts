@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { LineCounter, parseDocument, visit } from "yaml";
 import { GlobError, normalizeGlob } from "./glob.js";
 import { findSlowPattern } from "./regex-runner.js";
-import type { LocalizedText, Rule, Severity, Template } from "./types.js";
+import { LANGS, type Lang, type LocalizedText, type Rule, type Severity, type Template } from "./types.js";
 
 export const MAX_TEMPLATE_BYTES = 1024 * 1024;
 export const MAX_AI_CHECKS = 30;
@@ -277,12 +277,12 @@ function localized(
     return undefined;
   }
   if (!isObj(v) || Object.keys(v).length === 0) {
-    err(p, "must be a mapping with ko and/or en");
+    err(p, "must be a mapping with ko, en and/or zh");
     return undefined;
   }
   const out: LocalizedText = {};
   for (const [lang, raw] of Object.entries(v)) {
-    if (lang !== "ko" && lang !== "en") {
+    if (!LANGS.includes(lang as Lang)) {
       err([...p, lang], `unknown language ${lang}`);
       continue;
     }
@@ -293,7 +293,7 @@ function localized(
     const s = o.ai ? sanitizeAiText(raw) : raw;
     const len = [...s].length;
     if (len === 0 || len > o.max) err([...p, lang], `must be 1-${o.max} characters${o.ai ? " after sanitizing" : ""}`);
-    out[lang] = s;
+    out[lang as Lang] = s;
   }
   return out;
 }

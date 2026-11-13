@@ -7,7 +7,7 @@ name: Default
 rules:
   # ---------- secrets (pattern, build_output) ----------
   - id: secret-openai
-    name: { ko: OpenAI 키 노출, en: OpenAI key exposed }
+    name: { ko: OpenAI 키 노출, en: OpenAI key exposed, zh: OpenAI 密钥泄露 }
     type: pattern
     severity: critical
     files: ['**/*']
@@ -18,12 +18,14 @@ rules:
     description:
       ko: OpenAI API 키가 코드나 빌드 결과에 들어 있습니다. 이 키를 가진 사람은 누구나 계정 요금으로 API를 쓸 수 있습니다.
       en: An OpenAI API key is in your code or build output. Anyone who has it can use the API on your bill.
+      zh: 代码或构建产物中有 OpenAI API 密钥。拿到它的任何人都能用你的账户付费调用 API。
     fix_prompt:
       ko: 먼저 사람이 OpenAI 대시보드에서 이 키를 폐기하고 새로 발급합니다. 코드에서는 키 값을 지우고 서버 쪽 환경변수에서 읽게 바꾸세요. 브라우저 코드에서는 OpenAI를 직접 부르지 말고 서버 API를 거치게 하세요.
       en: First, a person revokes this key in the OpenAI dashboard and issues a new one. In code, remove the value and read it from a server-side environment variable. Do not call OpenAI from browser code; go through your server.
+      zh: 首先，由人工在 OpenAI 控制台吊销此密钥并重新签发。在代码中删除该值，改为从服务端环境变量读取。不要在浏览器代码中直接调用 OpenAI，应通过你的服务器。
 
   - id: secret-anthropic
-    name: { ko: Anthropic 키 노출, en: Anthropic key exposed }
+    name: { ko: Anthropic 키 노출, en: Anthropic key exposed, zh: Anthropic 密钥泄露 }
     type: pattern
     severity: critical
     files: ['**/*']
@@ -33,12 +35,14 @@ rules:
     description:
       ko: Anthropic API 키가 코드나 빌드 결과에 들어 있습니다. 이 키를 가진 사람은 누구나 계정 요금으로 API를 쓸 수 있습니다.
       en: An Anthropic API key is in your code or build output. Anyone who has it can use the API on your bill.
+      zh: 代码或构建产物中有 Anthropic API 密钥。拿到它的任何人都能用你的账户付费调用 API。
     fix_prompt:
       ko: 먼저 사람이 Anthropic Console에서 이 키를 폐기하고 새로 발급합니다. 코드에서는 키 값을 지우고 서버 쪽 환경변수에서 읽게 바꾸세요.
       en: First, a person revokes this key in the Anthropic Console and issues a new one. In code, remove the value and read it from a server-side environment variable.
+      zh: 首先，由人工在 Anthropic Console 中吊销此密钥并重新签发。在代码中删除该值，改为从服务端环境变量读取。
 
   - id: secret-supabase-service-role
-    name: { ko: Supabase 서비스 키 노출, en: Supabase service key exposed }
+    name: { ko: Supabase 서비스 키 노출, en: Supabase service key exposed, zh: Supabase 服务密钥泄露 }
     type: pattern
     severity: critical
     files: ['**/*']
@@ -50,13 +54,15 @@ rules:
     description:
       ko: Supabase의 service_role 키(또는 sb_secret_ 키)는 행 수준 보안(RLS)을 무시하고 DB 전체를 읽고 쓸 수 있습니다. sb_secret_ 키는 브라우저에서 막히지만, 유출된 키는 다른 도구로 쓸 수 있어 교체가 필요합니다.
       en: The Supabase service_role key (or an sb_secret_ key) bypasses Row Level Security and can read and write your whole database. sb_secret_ keys are rejected in browsers, but a leaked key still works from other tools, so it must be replaced.
+      zh: Supabase 的 service_role 密钥（或 sb_secret_ 密钥）会绕过行级安全（RLS），可以读写整个数据库。浏览器会拒绝 sb_secret_ 密钥，但泄露的密钥仍可在其他工具中使用，因此必须更换。
     fix_prompt:
       ko: 먼저 사람이 Supabase 대시보드에서 이 키를 폐기하고 새로 발급합니다. 레거시 JWT 키라면 새 API 키 체계(sb_secret_/sb_publishable_)로 전환하세요. 코드에서는 키 값을 지우고, 이 키를 쓰는 코드를 서버 쪽(API 라우트·서버 함수)으로 옮겨 서버 환경변수에서 읽게 하세요.
       en: First, a person revokes this key in the Supabase dashboard and issues a new one. If it is a legacy JWT key, switch to the new API key system (sb_secret_/sb_publishable_). In code, remove the value and move the code that uses it to the server side (API route or server function), reading it from a server environment variable.
+      zh: 首先，由人工在 Supabase 控制台吊销此密钥并重新签发。如果是旧版 JWT 密钥，请切换到新的 API 密钥体系（sb_secret_/sb_publishable_）。在代码中删除该值，并把使用它的代码移到服务端（API 路由或服务端函数），从服务端环境变量读取。
 
   # Legacy anon JWT (Lovable/Bolt default client): public by design, always info (§6-4 allowlist).
   - id: supabase-anon-key
-    name: { ko: Supabase 공개(anon) 키 — 브라우저에 있어도 정상, en: Supabase public (anon) key — fine in the browser }
+    name: { ko: Supabase 공개(anon) 키 — 브라우저에 있어도 정상, en: Supabase public (anon) key — fine in the browser, zh: Supabase 公开（anon）密钥 — 放在浏览器中没问题 }
     type: pattern
     severity: medium
     files: ['**/*']
@@ -67,12 +73,14 @@ rules:
     description:
       ko: Supabase anon 키는 브라우저 코드에 두도록 만든 공개 키라서 노출 자체는 문제가 아닙니다. 데이터를 실제로 지키는 것은 이 키가 아니라 테이블의 행 수준 보안(RLS) 정책입니다. 이 키는 레거시 JWT 형식이므로 새 공개 키(sb_publishable_)로 바꾸는 것을 권장합니다.
       en: The Supabase anon key is a public key meant to live in browser code, so seeing it there is not a problem. What actually protects your data is Row Level Security (RLS) on your tables, not this key. It uses the legacy JWT format, so switching to the new publishable key (sb_publishable_) is recommended.
+      zh: Supabase anon 密钥是设计上就放在浏览器代码中的公开密钥，出现在那里本身不是问题。真正保护数据的不是这个密钥，而是表上的行级安全（RLS）策略。它使用旧版 JWT 格式，建议换成新的公开密钥（sb_publishable_）。
     fix_prompt:
       ko: 이 키는 브라우저 코드에 그대로 두세요. 키를 지우거나 서버 쪽으로 옮기지 마세요. 대신 브라우저에서 읽고 쓰는 모든 테이블에 RLS가 켜져 있고, 정책이 필요한 사용자·행만 허용하는지 확인하세요. 원하면 Supabase 대시보드 API Keys에서 sb_publishable_ 키를 만들어 이 값을 그 키로 바꾸세요.
       en: Keep this key in the browser code. Do not delete it or move it to the server. Instead, check that RLS is enabled on every table the browser reads or writes, and that its policies allow only the users and rows that need access. Optionally, create an sb_publishable_ key under API Keys in the Supabase dashboard and replace this value with it.
+      zh: 把这个密钥留在浏览器代码中。不要删除它，也不要把它移到服务端。请确认浏览器读写的每张表都开启了 RLS，并且策略只允许需要访问的用户和行。也可以在 Supabase 控制台的 API Keys 中创建 sb_publishable_ 密钥，并用它替换这个值。
 
   - id: secret-supabase-pat
-    name: { ko: Supabase 개인 액세스 토큰 노출, en: Supabase personal access token exposed }
+    name: { ko: Supabase 개인 액세스 토큰 노출, en: Supabase personal access token exposed, zh: Supabase 个人访问令牌泄露 }
     type: pattern
     severity: critical
     files: ['**/*']
@@ -82,12 +90,14 @@ rules:
     description:
       ko: Supabase 개인 액세스 토큰은 계정의 모든 프로젝트를 관리 API로 다룰 수 있는 권한입니다.
       en: A Supabase personal access token can manage every project in your account through the Management API.
+      zh: Supabase 个人访问令牌可以通过 Management API 管理你账户中的所有项目。
     fix_prompt:
       ko: 먼저 사람이 Supabase 계정 설정에서 이 토큰을 폐기합니다. 코드와 설정 파일에서 토큰 값을 지우고, 꼭 필요하면 저장소 밖 환경변수로만 쓰세요.
       en: First, a person revokes this token in Supabase account settings. Remove the value from code and config files; if it is really needed, keep it only in an environment variable outside the repository.
+      zh: 首先，由人工在 Supabase 账户设置中吊销此令牌。从代码和配置文件中删除该值；如果确实需要，只放在仓库之外的环境变量中。
 
   - id: secret-aws
-    name: { ko: AWS 키 노출, en: AWS key exposed }
+    name: { ko: AWS 키 노출, en: AWS key exposed, zh: AWS 密钥泄露 }
     type: pattern
     severity: critical
     files: ['**/*']
@@ -98,12 +108,14 @@ rules:
     description:
       ko: AWS 액세스 키가 코드에 들어 있습니다. 권한에 따라 서버·저장소·결제까지 다른 사람이 다룰 수 있습니다.
       en: An AWS access key is in your code. Depending on its permissions, others can control servers, storage and billing.
+      zh: 代码中有 AWS 访问密钥。根据其权限，别人可以控制服务器、存储甚至账单。
     fix_prompt:
       ko: 먼저 사람이 AWS IAM에서 이 키를 폐기(비활성화·삭제)하고 새로 발급합니다. 코드에서는 키 값을 지우고 서버 환경변수나 AWS 역할(IAM Role)로 인증하게 바꾸세요.
       en: First, a person deactivates and deletes this key in AWS IAM and issues a new one. In code, remove the value and authenticate with a server environment variable or an IAM role.
+      zh: 首先，由人工在 AWS IAM 中停用并删除此密钥，然后重新签发。在代码中删除该值，改用服务端环境变量或 IAM 角色进行认证。
 
   - id: secret-stripe-live
-    name: { ko: Stripe 비밀 키 노출, en: Stripe secret key exposed }
+    name: { ko: Stripe 비밀 키 노출, en: Stripe secret key exposed, zh: Stripe 密钥泄露 }
     type: pattern
     severity: critical
     files: ['**/*']
@@ -114,12 +126,14 @@ rules:
     description:
       ko: Stripe 운영 비밀 키는 결제·환불·고객 정보를 다룰 수 있습니다. pk_ 로 시작하는 공개 키와 다릅니다.
       en: A live Stripe secret key can create charges, refunds and read customer data. It is not the same as a public pk_ key.
+      zh: Stripe 正式环境密钥可以创建扣款、退款并读取客户数据。它和以 pk_ 开头的公开密钥不同。
     fix_prompt:
       ko: 먼저 사람이 Stripe 대시보드에서 이 키를 폐기하고 새 키로 교체(롤)합니다. 코드에서는 키 값을 지우고 서버 환경변수에서 읽게 바꾸세요. 브라우저에는 pk_ 공개 키만 두세요.
       en: First, a person rolls this key in the Stripe dashboard. In code, remove the value and read it from a server environment variable. Only the public pk_ key belongs in the browser.
+      zh: 首先，由人工在 Stripe 控制台轮换（roll）此密钥。在代码中删除该值，改为从服务端环境变量读取。浏览器中只能放 pk_ 公开密钥。
 
   - id: secret-github
-    name: { ko: GitHub 토큰 노출, en: GitHub token exposed }
+    name: { ko: GitHub 토큰 노출, en: GitHub token exposed, zh: GitHub 令牌泄露 }
     type: pattern
     severity: critical
     files: ['**/*']
@@ -130,12 +144,14 @@ rules:
     description:
       ko: GitHub 토큰으로 저장소 코드를 읽거나 바꿀 수 있습니다.
       en: A GitHub token can read or change your repositories.
+      zh: GitHub 令牌可以读取或修改你的仓库。
     fix_prompt:
       ko: 먼저 사람이 GitHub 설정에서 이 토큰을 폐기합니다. 코드에서는 토큰 값을 지우고 서버 환경변수나 CI 비밀 값에서 읽게 바꾸세요.
       en: First, a person revokes this token in GitHub settings. In code, remove the value and read it from a server environment variable or a CI secret.
+      zh: 首先，由人工在 GitHub 设置中吊销此令牌。在代码中删除该值，改为从服务端环境变量或 CI 密钥中读取。
 
   - id: secret-google-key
-    name: { ko: Google API 키 확인 필요, en: Google API key needs review }
+    name: { ko: Google API 키 확인 필요, en: Google API key needs review, zh: Google API 密钥需要确认 }
     type: pattern
     severity: medium
     files: ['**/*']
@@ -145,12 +161,14 @@ rules:
     description:
       ko: Google API 키가 있습니다. Firebase 웹 설정의 키는 공개해도 되지만, Gemini 같은 유료 API 키라면 다른 사람이 요금으로 쓸 수 있습니다.
       en: A Google API key was found. Keys in a Firebase web config are meant to be public, but a key for a paid API such as Gemini can be used on your bill.
+      zh: 发现了 Google API 密钥。Firebase 网页配置中的密钥本来就是公开的，但 Gemini 等付费 API 的密钥可能被别人用你的账户付费调用。
     fix_prompt:
       ko: 이 키가 어떤 API용인지 Google Cloud 콘솔에서 확인하세요. 유료 API용이면 먼저 사람이 키를 폐기하고 새로 발급합니다. 유료 API용이면 코드에서는 서버 쪽 환경변수에서 읽게 바꾸세요. 공개용이면 콘솔에서 API·도메인 제한을 거세요.
       en: Check in the Google Cloud console which APIs this key can call. If it is for a paid API, a person first revokes and reissues it. For a paid API, the code reads it from a server-side environment variable. If it is meant to be public, add API and referrer restrictions in the console.
+      zh: 请在 Google Cloud 控制台确认此密钥可以调用哪些 API。如果用于付费 API，先由人工吊销并重新签发。如果用于付费 API，代码应改为从服务端环境变量读取。如果本来就是公开用的，请在控制台中添加 API 和来源（referrer）限制。
 
   - id: secret-private-key
-    name: { ko: 개인 키 노출, en: Private key exposed }
+    name: { ko: 개인 키 노출, en: Private key exposed, zh: 私钥泄露 }
     type: pattern
     severity: critical
     files: ['**/*']
@@ -160,12 +178,14 @@ rules:
     description:
       ko: 개인 키(PEM) 전체가 파일에 들어 있습니다. 이 키로 서버 접속·서명·복호화를 할 수 있습니다.
       en: A full private key (PEM) is in a file. It can be used to log in to servers, sign or decrypt.
+      zh: 文件中包含完整的私钥（PEM）。它可以用来登录服务器、签名或解密。
     fix_prompt:
       ko: 먼저 사람이 이 키를 쓰는 서비스에서 키를 폐기하고 새 키 쌍을 만듭니다. 저장소에서는 키 파일을 지우고 .gitignore에 추가하세요.
       en: First, a person revokes this key wherever it is used and creates a new key pair. Remove the key from the repository and add it to .gitignore.
+      zh: 首先，由人工在所有使用此密钥的地方吊销它，并创建新的密钥对。从仓库中删除该密钥，并把它加入 .gitignore。
 
   - id: secret-db-url
-    name: { ko: DB 접속 주소에 비밀번호 포함, en: Database URL with password }
+    name: { ko: DB 접속 주소에 비밀번호 포함, en: Database URL with password, zh: 数据库连接地址中含密码 }
     type: pattern
     severity: high
     files: ['**/*']
@@ -175,12 +195,14 @@ rules:
     description:
       ko: 데이터베이스 접속 주소에 비밀번호가 들어 있습니다. 이 주소로 DB에 바로 접속할 수 있습니다.
       en: A database connection URL contains a password. Anyone with it can connect to the database.
+      zh: 数据库连接地址中含有密码。拿到它的任何人都能连接数据库。
     fix_prompt:
       ko: 운영 DB라면 먼저 사람이 DB 비밀번호를 바꿉니다. 코드에서는 접속 주소를 지우고 서버 환경변수(DATABASE_URL 등)에서 읽게 바꾸세요.
       en: If this is a real database, a person first changes its password. In code, remove the URL and read it from a server environment variable such as DATABASE_URL.
+      zh: 如果是真实使用的数据库，先由人工修改其密码。在代码中删除该地址，改为从 DATABASE_URL 等服务端环境变量读取。
 
   - id: secret-vulnintel
-    name: { ko: VulnIntel API 키 노출, en: VulnIntel API key exposed }
+    name: { ko: VulnIntel API 키 노출, en: VulnIntel API key exposed, zh: VulnIntel API 密钥泄露 }
     type: pattern
     severity: critical
     files: ['**/*']
@@ -190,12 +212,14 @@ rules:
     description:
       ko: VulnIntel API 키가 코드에 들어 있습니다.
       en: A VulnIntel API key is in your code.
+      zh: 代码中有 VulnIntel API 密钥。
     fix_prompt:
       ko: 먼저 사람이 VulnIntel 설정에서 이 키를 폐기하고 새로 발급합니다. 키는 환경변수 VULNINTEL_API_KEY로만 쓰세요.
       en: First, a person revokes this key in VulnIntel settings and issues a new one. Use the key only through the VULNINTEL_API_KEY environment variable.
+      zh: 首先，由人工在 VulnIntel 设置中吊销此密钥并重新签发。只通过 VULNINTEL_API_KEY 环境变量使用该密钥。
 
   - id: secret-public-env-prefix
-    name: { ko: 공개 환경변수에 비밀 값, en: Secret in a public env variable }
+    name: { ko: 공개 환경변수에 비밀 값, en: Secret in a public env variable, zh: 公开环境变量中的密钥 }
     type: pattern
     severity: high
     files: ['**/*']
@@ -205,12 +229,14 @@ rules:
     description:
       ko: NEXT_PUBLIC_·VITE_·EXPO_PUBLIC_·REACT_APP_ 로 시작하는 환경변수는 브라우저로 보내는 코드에 그대로 들어갑니다. 이름에 SECRET·SERVICE_ROLE·PRIVATE가 있으면 비밀 값일 가능성이 큽니다.
       en: Environment variables starting with NEXT_PUBLIC_, VITE_, EXPO_PUBLIC_ or REACT_APP_ are copied into the code sent to browsers. A name containing SECRET, SERVICE_ROLE or PRIVATE is likely a secret.
+      zh: 以 NEXT_PUBLIC_、VITE_、EXPO_PUBLIC_ 或 REACT_APP_ 开头的环境变量会被原样复制到发送给浏览器的代码中。名称中含 SECRET、SERVICE_ROLE 或 PRIVATE 的，很可能是密钥。
     fix_prompt:
       ko: 이 값이 실제 비밀이면 먼저 사람이 발급처에서 폐기하고 새로 발급합니다. 공개 접두사가 없는 이름으로 바꾸고, 이 값을 쓰는 코드를 서버 쪽으로 옮기세요.
       en: If the value is a real secret, a person first revokes and reissues it at the provider. Rename the variable without the public prefix and move the code that uses it to the server side.
+      zh: 如果该值确实是密钥，先由人工在服务商处吊销并重新签发。把变量改成不带公开前缀的名称，并把使用它的代码移到服务端。
 
   - id: secret-in-mcp-config
-    name: { ko: MCP 설정 파일에 키, en: Key in an MCP config file }
+    name: { ko: MCP 설정 파일에 키, en: Key in an MCP config file, zh: MCP 配置文件中有密钥 }
     type: pattern
     severity: high
     files: ['.mcp.json', '**/.cursor/mcp.json', '**/.vscode/mcp.json', 'claude_desktop_config.json']
@@ -221,13 +247,15 @@ rules:
     description:
       ko: AI 도구의 MCP 설정 파일에 키 값이 그대로 적혀 있습니다. 이 파일은 저장소에 함께 올라가기 쉽습니다.
       en: An AI tool's MCP config file contains a key value. These files are easy to commit by accident.
+      zh: AI 工具的 MCP 配置文件中直接写着密钥值。这类文件很容易被误提交。
     fix_prompt:
       ko: 먼저 사람이 이 키를 발급처에서 폐기하고 새로 발급합니다. 설정 파일에는 값 대신 환경변수 참조를 쓰세요.
       en: First, a person revokes this key at the provider and issues a new one. In the config file, reference an environment variable instead of the value.
+      zh: 首先，由人工在服务商处吊销此密钥并重新签发。在配置文件中引用环境变量，而不是直接写值。
 
   # ---------- files & git ----------
   - id: env-committed
-    name: { ko: .env 파일이 git에 올라감, en: .env file committed to git }
+    name: { ko: .env 파일이 git에 올라감, en: .env file committed to git, zh: .env 文件已提交到 git }
     type: file
     severity: critical
     files: ['.env', '.env.local', '.env.production*', '.env.development*']
@@ -237,12 +265,14 @@ rules:
     description:
       ko: .env 파일이 git에 추적되거나 이력에 남아 있습니다. 파일을 지워도 이력에서 값을 꺼낼 수 있습니다.
       en: A .env file is tracked by git or remains in its history. Deleting the file does not remove the values from history.
+      zh: .env 文件被 git 跟踪，或残留在 git 历史中。删除文件并不能把值从历史中移除。
     fix_prompt:
       ko: 먼저 사람이 이 파일에 있던 키를 발급처에서 폐기하고 새로 발급합니다(키 교체 — 이력에 남으므로 파일 삭제만으로는 안 됩니다). 그다음 git 추적을 해제하고(git rm --cached {file}) .gitignore에 .env 규칙을 추가하세요.
       en: First, a person revokes every key that was in this file and issues new ones (rotate — the values stay in history, so deleting the file is not enough). Then stop tracking it (git rm --cached {file}) and add a .env rule to .gitignore.
+      zh: 首先，由人工在服务商处吊销此文件中的每个密钥并重新签发（轮换 — 值会留在历史中，只删除文件不够）。然后取消跟踪（git rm --cached {file}），并在 .gitignore 中添加 .env 规则。
 
   - id: gitignore-env-missing
-    name: { ko: .gitignore에 .env 규칙 없음, en: .gitignore has no .env rule }
+    name: { ko: .gitignore에 .env 규칙 없음, en: .gitignore has no .env rule, zh: .gitignore 中没有 .env 规则 }
     type: pattern
     severity: high
     files: ['.gitignore']
@@ -253,12 +283,14 @@ rules:
     description:
       ko: .env 파일이 있는데 .gitignore가 막지 않습니다. 실수로 커밋되기 쉽습니다.
       en: There are .env files but .gitignore does not exclude them. They are easy to commit by accident.
+      zh: 存在 .env 文件，但 .gitignore 没有排除它们。很容易被误提交。
     fix_prompt:
       ko: .gitignore에 .env와 .env*.local 규칙을 추가하세요. 예제 파일(.env.example)은 그대로 둡니다.
       en: Add .env and .env*.local rules to .gitignore. Keep example files (.env.example) as they are.
+      zh: 在 .gitignore 中添加 .env 和 .env*.local 规则。示例文件（.env.example）保持不变。
 
   - id: key-file-committed
-    name: { ko: 키 파일이 git에 올라감, en: Key file committed to git }
+    name: { ko: 키 파일이 git에 올라감, en: Key file committed to git, zh: 密钥文件已提交到 git }
     type: file
     severity: critical
     files: ['*.pem', '*.p12', '*.key', 'id_rsa*', '*firebase-adminsdk*.json', 'serviceAccount*.json']
@@ -268,12 +300,14 @@ rules:
     description:
       ko: 개인 키나 서비스 계정 키 파일이 git에 추적되거나 이력에 남아 있습니다. 파일을 지워도 이력에서 꺼낼 수 있습니다.
       en: A private key or service account key file is tracked by git or remains in its history. Deleting the file does not remove it from history.
+      zh: 私钥或服务账号密钥文件被 git 跟踪，或残留在 git 历史中。删除文件并不能把它从历史中移除。
     fix_prompt:
       ko: 먼저 사람이 이 키를 발급처에서 폐기하고 새로 발급합니다(키 교체 — 이력에 남습니다). 그다음 git 추적을 해제하고(git rm --cached {file}) .gitignore에 추가하세요.
       en: First, a person revokes this key at the provider and issues a new one (rotate — it stays in history). Then stop tracking it (git rm --cached {file}) and add it to .gitignore.
+      zh: 首先，由人工在服务商处吊销此密钥并重新签发（轮换 — 它会留在历史中）。然后取消跟踪（git rm --cached {file}），并把它加入 .gitignore。
 
   - id: sourcemap-in-build
-    name: { ko: 빌드 결과에 소스맵, en: Source map in build output }
+    name: { ko: 빌드 결과에 소스맵, en: Source map in build output, zh: 构建产物中有 source map }
     type: file
     severity: medium
     files: ['**/dist/**/*.map', '**/build/**/*.map', '**/.next/static/**/*.map']
@@ -281,9 +315,11 @@ rules:
     description:
       ko: 배포용 빌드 결과에 소스맵이 있어 원본 소스 코드를 그대로 볼 수 있습니다.
       en: The build output contains source maps, which reveal your original source code.
+      zh: 构建产物中包含 source map，会暴露你的原始源代码。
     fix_prompt:
       ko: 번들러 설정에서 운영 빌드의 소스맵을 끄거나 'hidden'으로 바꾸고, 배포물에 .map 파일이 올라가지 않게 하세요.
       en: In the bundler config, turn off production source maps or set them to 'hidden', and make sure .map files are not deployed.
+      zh: 在打包工具配置中关闭生产环境 source map 或设为 'hidden'，并确保 .map 文件不会被部署。
 
   # ---------- backend access rules (builtin, stage 4) ----------
   - id: supabase-rls
@@ -295,7 +331,7 @@ rules:
 
   # ---------- CORS ----------
   - id: cors-wildcard
-    name: { ko: 모든 사이트에 CORS 허용, en: CORS allows every site }
+    name: { ko: 모든 사이트에 CORS 허용, en: CORS allows every site, zh: CORS 允许所有网站 }
     type: pattern
     severity: medium
     files: ['**/*.{js,jsx,ts,tsx,mjs,cjs,py,java,kt,php,go,rb,json,toml,yaml,yml,conf}']
@@ -314,12 +350,14 @@ rules:
     description:
       ko: 어느 웹사이트에서든 이 서버 API를 부를 수 있게 열려 있습니다.
       en: Any website can call this server's API.
+      zh: 任何网站都可以调用此服务器的 API。
     fix_prompt:
       ko: CORS 허용 출처를 실제 서비스 도메인 목록으로 좁히세요. 와일드카드(*)나 인자 없는 기본 설정을 쓰지 마세요.
       en: Restrict allowed CORS origins to your real domains. Do not use a wildcard (*) or the no-argument default.
+      zh: 把允许的 CORS 来源限制为你的真实域名。不要使用通配符（*）或不带参数的默认设置。
 
   - id: cors-credentials-any
-    name: { ko: 쿠키 포함 요청을 모든 출처에 허용, en: Credentialed CORS for any origin }
+    name: { ko: 쿠키 포함 요청을 모든 출처에 허용, en: Credentialed CORS for any origin, zh: 对任意来源允许带凭据的 CORS }
     type: pattern
     severity: high
     files: ['**/*.{js,jsx,ts,tsx,mjs,cjs,py,java,kt,php,go,rb}']
@@ -337,13 +375,15 @@ rules:
     description:
       ko: 로그인 쿠키를 포함한 요청을 아무 사이트에서나 받도록 열려 있습니다. 다른 사이트가 사용자 대신 API를 부를 수 있습니다.
       en: Requests with login cookies are accepted from any site, so another site can call your API as the user.
+      zh: 来自任何网站的带登录 Cookie 的请求都会被接受，其他网站可以冒充用户调用你的 API。
     fix_prompt:
       ko: credentials를 허용할 때는 허용 출처를 정해진 도메인 목록으로만 두세요. 요청의 Origin을 그대로 돌려주거나 모든 출처를 허용하지 마세요.
       en: When credentials are allowed, allow only a fixed list of domains. Do not echo the request Origin or allow every origin.
+      zh: 允许 credentials 时，只允许固定的域名列表。不要原样返回请求的 Origin，也不要允许所有来源。
 
   # ---------- debug & source maps ----------
   - id: debug-django
-    name: { ko: Django DEBUG 켜짐, en: Django DEBUG on }
+    name: { ko: Django DEBUG 켜짐, en: Django DEBUG on, zh: Django DEBUG 已开启 }
     type: pattern
     severity: high
     files: ['**/settings*.py', '**/settings/*.py']
@@ -352,12 +392,14 @@ rules:
     description:
       ko: 운영 설정에서 DEBUG가 켜져 있으면 오류 화면에 설정·코드·환경 정보가 그대로 보입니다.
       en: With DEBUG on in production, error pages show settings, code and environment details.
+      zh: 在生产环境开启 DEBUG 时，错误页面会显示设置、代码和环境信息。
     fix_prompt:
       ko: 운영 설정에서 DEBUG = False로 두고, 개발용 설정에서만 켜지게 환경변수로 나누세요.
       en: Set DEBUG = False in production settings and enable it only in development via an environment variable.
+      zh: 在生产设置中设为 DEBUG = False，并通过环境变量只在开发环境中开启。
 
   - id: debug-flask
-    name: { ko: Flask 디버그 모드, en: Flask debug mode }
+    name: { ko: Flask 디버그 모드, en: Flask debug mode, zh: Flask 调试模式 }
     type: pattern
     severity: high
     files: ['**/*.py']
@@ -366,12 +408,14 @@ rules:
     description:
       ko: Flask 디버그 모드는 브라우저에서 서버 코드를 실행할 수 있는 디버거를 엽니다.
       en: Flask debug mode opens a debugger that can run code on the server from the browser.
+      zh: Flask 调试模式会打开一个调试器，可以从浏览器在服务器上运行代码。
     fix_prompt:
       ko: app.run에서 debug=True를 지우고, 개발할 때만 환경변수로 켜세요.
       en: Remove debug=True from app.run and enable debug only during development via an environment variable.
+      zh: 从 app.run 中删除 debug=True，只在开发时通过环境变量开启调试。
 
   - id: debug-fastapi
-    name: { ko: FastAPI 디버그 모드, en: FastAPI debug mode }
+    name: { ko: FastAPI 디버그 모드, en: FastAPI debug mode, zh: FastAPI 调试模式 }
     type: pattern
     severity: high
     files: ['**/*.py']
@@ -380,12 +424,14 @@ rules:
     description:
       ko: FastAPI 디버그 모드는 오류 응답에 스택트레이스를 그대로 보여줍니다.
       en: FastAPI debug mode returns stack traces in error responses.
+      zh: FastAPI 调试模式会在错误响应中返回堆栈跟踪。
     fix_prompt:
       ko: FastAPI(...)에서 debug=True를 지우거나 환경변수로 개발 환경에서만 켜세요.
       en: Remove debug=True from FastAPI(...) or enable it only in development via an environment variable.
+      zh: 从 FastAPI(...) 中删除 debug=True，或通过环境变量只在开发环境中开启。
 
   - id: debug-laravel
-    name: { ko: Laravel 디버그 켜짐, en: Laravel debug on }
+    name: { ko: Laravel 디버그 켜짐, en: Laravel debug on, zh: Laravel 调试已开启 }
     type: pattern
     severity: high
     files: ['**/config/app.php']
@@ -396,12 +442,14 @@ rules:
     description:
       ko: Laravel 디버그가 켜져 있으면 오류 화면에 환경 변수와 코드가 보입니다.
       en: With Laravel debug on, error pages show environment variables and code.
+      zh: Laravel 开启调试时，错误页面会显示环境变量和代码。
     fix_prompt:
       ko: config/app.php의 debug 기본값을 false로 두고, 운영 .env에서 APP_DEBUG=false로 설정하세요.
       en: Make the debug default false in config/app.php and set APP_DEBUG=false in the production .env.
+      zh: 把 config/app.php 中 debug 的默认值设为 false，并在生产 .env 中设置 APP_DEBUG=false。
 
   - id: debug-spring
-    name: { ko: Spring 디버그·내부 정보 노출, en: Spring debug or internals exposed }
+    name: { ko: Spring 디버그·내부 정보 노출, en: Spring debug or internals exposed, zh: Spring 调试或内部信息暴露 }
     type: pattern
     severity: high
     files: ['application*.{properties,yml,yaml}']
@@ -415,12 +463,14 @@ rules:
     description:
       ko: 디버그·스택트레이스·관리 엔드포인트 전체 공개 설정은 서버 내부 정보를 보여줍니다.
       en: Debug, stack traces or fully exposed management endpoints reveal server internals.
+      zh: 调试、堆栈跟踪或完全公开的管理端点会暴露服务器内部信息。
     fix_prompt:
       ko: 운영 설정에서 debug를 끄고, include-stacktrace를 never로, 관리 엔드포인트는 health 등 필요한 것만 공개하세요.
       en: In production settings turn debug off, set include-stacktrace to never, and expose only the management endpoints you need (such as health).
+      zh: 在生产设置中关闭 debug，把 include-stacktrace 设为 never，管理端点只公开需要的（例如 health）。
 
   - id: debug-env-production
-    name: { ko: 운영 .env에서 디버그 켜짐, en: Debug on in production .env }
+    name: { ko: 운영 .env에서 디버그 켜짐, en: Debug on in production .env, zh: 生产 .env 中开启了调试 }
     type: pattern
     severity: high
     files: ['.env.prod*']
@@ -429,12 +479,14 @@ rules:
     description:
       ko: 운영용 .env에서 디버그가 켜져 있습니다.
       en: Debug is turned on in a production .env file.
+      zh: 生产环境的 .env 文件中开启了调试。
     fix_prompt:
       ko: 운영 .env의 디버그 값을 false로 바꾸세요.
       en: Set the debug value to false in the production .env file.
+      zh: 把生产 .env 文件中的调试值改为 false。
 
   - id: sourcemap-next
-    name: { ko: Next.js 운영 소스맵 공개, en: Next.js production source maps }
+    name: { ko: Next.js 운영 소스맵 공개, en: Next.js production source maps, zh: Next.js 生产环境 source map }
     type: pattern
     severity: medium
     files: ['**/next.config.{js,mjs,cjs,ts}']
@@ -443,12 +495,14 @@ rules:
     description:
       ko: 운영 빌드에서 브라우저용 소스맵을 만들어 원본 코드가 공개됩니다.
       en: Production builds publish browser source maps, revealing your original code.
+      zh: 生产构建会发布浏览器 source map，暴露你的原始代码。
     fix_prompt:
       ko: next.config에서 productionBrowserSourceMaps를 false로 바꾸거나 지우세요.
       en: Set productionBrowserSourceMaps to false in next.config, or remove it.
+      zh: 在 next.config 中把 productionBrowserSourceMaps 设为 false，或删除该设置。
 
   - id: sourcemap-vite
-    name: { ko: Vite 운영 소스맵 공개, en: Vite production source maps }
+    name: { ko: Vite 운영 소스맵 공개, en: Vite production source maps, zh: Vite 生产环境 source map }
     type: pattern
     severity: medium
     files: ['**/vite.config.{js,mjs,cjs,ts,mts}']
@@ -457,9 +511,11 @@ rules:
     description:
       ko: 운영 빌드에서 소스맵을 함께 배포해 원본 코드가 공개됩니다.
       en: Production builds ship source maps, revealing your original code.
+      zh: 生产构建会附带 source map 一起发布，暴露你的原始代码。
     fix_prompt:
       ko: vite.config의 build.sourcemap을 false 또는 'hidden'으로 바꾸세요.
       en: Set build.sourcemap in vite.config to false or 'hidden'.
+      zh: 把 vite.config 中的 build.sourcemap 设为 false 或 'hidden'。
 
   # ---------- dependencies (builtin, stage 4) ----------
   - id: hallucinated-package
@@ -477,63 +533,74 @@ rules:
     check:
       ko: 관리자나 특정 역할만 쓸 수 있는 기능을 서버가 역할을 확인해서 막는가(화면에서 버튼만 숨긴 것은 아닌가)
       en: Does the server check the user's role before admin-only or role-only actions (not just hide the button in the UI)?
+      zh: 仅限管理员或特定角色的操作，服务器是否会先检查用户角色（而不只是在界面上隐藏按钮）？
   - id: ai-idor
     type: ai_check
     severity: high
     check:
       ko: 주소나 요청의 id만 바꿔서 다른 사람의 데이터를 읽거나 바꿀 수 없는가
       en: Is it impossible to read or change another user's data just by changing an id in the URL or request?
+      zh: 是否无法仅通过修改 URL 或请求中的 id 来读取或修改其他用户的数据？
   - id: ai-injection
     type: ai_check
     severity: high
     check:
       ko: 사용자 입력이 SQL·NoSQL 쿼리, 셸 명령, HTML에 그대로 들어가지 않는가
       en: Is user input kept out of SQL/NoSQL queries, shell commands and HTML without escaping or parameters?
+      zh: 用户输入是否不会未经转义或参数化就进入 SQL/NoSQL 查询、shell 命令和 HTML？
   - id: ai-server-validation
     type: ai_check
     severity: high
     check:
       ko: 금액·수량·권한 같은 값을 클라이언트가 보낸 그대로 믿지 않고 서버에서 다시 계산·검증하는가
       en: Are prices, quantities and permissions recalculated and checked on the server instead of trusting what the client sent?
+      zh: 价格、数量和权限是否在服务端重新计算和校验，而不是直接信任客户端发来的值？
   - id: ai-unauth-endpoint
     type: ai_check
     severity: high
     check:
       ko: 로그인 없이 부를 수 있는 API, 진단·테스트용 엔드포인트가 운영에 남아 있지 않은가
       en: Are there no API, diagnostic or test endpoints left in production that work without logging in?
+      zh: 生产环境中是否没有遗留无需登录即可调用的 API、诊断或测试端点？
   - id: ai-hardcoded-credential
     type: ai_check
     severity: high
     check:
       ko: 클라이언트 코드에 계정·비밀번호·토큰이 직접 적혀 있지 않은가
       en: Is client code free of hardcoded accounts, passwords and tokens?
+      zh: 客户端代码中是否没有硬编码的账号、密码和令牌？
   - id: ai-auth-disabled-default
     type: ai_check
     severity: high
     check:
       ko: 인증을 끄는 설정이나 플래그의 기본값이 꺼짐(인증 없음)으로 되어 있지 않은가
       en: Do settings or flags that turn authentication off default to keeping it on?
+      zh: 用于关闭认证的设置或开关，默认值是否为保持认证开启？
   - id: ai-cors-dynamic
     type: ai_check
     severity: medium
     check:
       ko: CORS 허용 출처를 요청의 Origin과 부분 문자열로 비교하거나 그대로 돌려주지 않는가
       en: Is the CORS origin check free of substring comparisons with the request Origin and of echoing it back?
+      zh: CORS 来源检查是否没有对请求的 Origin 做子串比较，也没有原样返回它？
   - id: ai-error-leak
     type: ai_check
     severity: medium
     check:
       ko: 오류 응답에 내부 오류 메시지나 스택트레이스를 그대로 돌려주지 않는가
       en: Do error responses avoid returning internal error messages or stack traces?
+      zh: 错误响应是否避免返回内部错误信息或堆栈跟踪？
   - id: ai-log-secret
     type: ai_check
     severity: medium
     check:
       ko: 로그나 console.log에 비밀번호·토큰·개인정보를 찍지 않는가
       en: Are passwords, tokens and personal data kept out of logs and console.log?
+      zh: 日志和 console.log 中是否没有输出密码、令牌和个人信息？
   - id: ai-db-policy-logic
     type: ai_check
     severity: high
     check:
       ko: Supabase 정책이나 Firebase 규칙이 로그인만 하면 남의 데이터에 접근하게 하거나, 컬럼 단위로 너무 넓은 권한을 주지 않는가
       en: Do Supabase policies or Firebase rules avoid letting any logged-in user reach other users' data, or granting too-broad column access?
+      zh: Supabase 策略或 Firebase 规则是否避免让任何已登录用户访问他人的数据，也没有授予过宽的列权限？

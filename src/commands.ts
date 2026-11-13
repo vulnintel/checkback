@@ -30,12 +30,16 @@ export interface CommandOptions {
 const WATCH_MAX = 50;
 const WATCH_DEFAULT = 10;
 const web = (lang: Lang, path: string): string => `https://www.vulnintelapp.com/${lang}${path}`;
+/** The text in `lang`: every user-facing CLI line names all languages, so a new one cannot fall into another branch. */
+const L = (lang: Lang, t: Record<Lang, string>): string => t[lang];
 
 function refuse(io: TtyIO, lang: Lang): number {
   io.error.write(
-    lang === "ko"
-      ? "이 명령은 사람이 터미널에서 직접 해야 합니다(비대화형 실행 거부). 아무것도 바꾸지 않았습니다.\n"
-      : "This command must be run by a person in a terminal (non-interactive run refused). Nothing was changed.\n",
+    L(lang, {
+      ko: "이 명령은 사람이 터미널에서 직접 해야 합니다(비대화형 실행 거부). 아무것도 바꾸지 않았습니다.\n",
+      en: "This command must be run by a person in a terminal (non-interactive run refused). Nothing was changed.\n",
+      zh: "此命令必须由人在终端中亲自运行（已拒绝非交互式运行）。未做任何更改。\n",
+    }),
   );
   return 1;
 }
@@ -127,36 +131,62 @@ export async function watchCandidates(cwd: string, appDir: string): Promise<{ ca
 async function watch(io: TtyIO, o: CommandOptions, ask: (q: string) => Promise<string>): Promise<number> {
   const ctx = await keyContext(io, o);
   if (!ctx) return 1;
-  const ko = o.lang === "ko";
+  const l = o.lang;
   const { cands, defaults } = await watchCandidates(o.cwd, ctx.appDir);
   if (cands.length === 0) {
-    io.output.write(ko ? "감시할 공개 패키지가 없습니다(lock 파일 필요).\n" : "No public locked packages to watch (a lock file is needed).\n");
+    io.output.write(
+      L(l, {
+        ko: "감시할 공개 패키지가 없습니다(lock 파일 필요).\n",
+        en: "No public locked packages to watch (a lock file is needed).\n",
+        zh: "没有可订阅的公开锁定包（需要 lock 文件）。\n",
+      }),
+    );
     return 1;
   }
+  const direct = L(l, { ko: " · 직접", en: " · direct", zh: " · 直接依赖" });
+  const vulnerable = L(l, { ko: " · 취약", en: " · vulnerable", zh: " · 有漏洞" });
   io.output.write(
     `${cands
-      .map((c, i) => `${String(i + 1).padStart(3)}) ${i < defaults ? "[*]" : "[ ]"} ${c.eco} ${c.name}${c.direct ? (ko ? " · 직접" : " · direct") : ""}${c.vuln ? (ko ? " · 취약" : " · vulnerable") : ""}`)
+      .map((c, i) => `${String(i + 1).padStart(3)}) ${i < defaults ? "[*]" : "[ ]"} ${c.eco} ${c.name}${c.direct ? direct : ""}${c.vuln ? vulnerable : ""}`)
       .join("\n")}\n`,
   );
+  const subs = web(l, "/settings/notifications");
   io.output.write(
-    ko
-      ? `보내는 것: 생태계·패키지 이름(버전·경로 없음). 서버 계정에 구독으로 남고 웹(${web(o.lang, "/settings/notifications")})에서 지웁니다.\n`
-      : `Sent: ecosystem and package name only (no version, no path). They stay as subscriptions on your account; remove them on the web (${web(o.lang, "/settings/notifications")}).\n`,
+    L(l, {
+      ko: `보내는 것: 생태계·패키지 이름(버전·경로 없음). 서버 계정에 구독으로 남고 웹(${subs})에서 지웁니다.\n`,
+      en: `Sent: ecosystem and package name only (no version, no path). They stay as subscriptions on your account; remove them on the web (${subs}).\n`,
+      zh: `发送内容：仅生态系统和包名（不含版本和路径）。它们会作为订阅保留在你的账户中，可在网页上删除（${subs}）。\n`,
+    }),
   );
-  const answer = await ask(ko ? `감시할 번호(예: 1,3,5-7 · Enter=[*] ${defaults}개 · q=취소): ` : `Numbers to watch (e.g. 1,3,5-7 · Enter=[*] ${defaults} · q=cancel): `);
+  const answer = await ask(
+    L(l, {
+      ko: `감시할 번호(예: 1,3,5-7 · Enter=[*] ${defaults}개 · q=취소): `,
+      en: `Numbers to watch (e.g. 1,3,5-7 · Enter=[*] ${defaults} · q=cancel): `,
+      zh: `要订阅的编号（例如 1,3,5-7 · Enter=[*] ${defaults} 个 · q=取消）：`,
+    }),
+  );
   if (/^q/i.test(answer)) return 1;
   const picked = (answer ? parseSelection(answer, cands.length) : cands.slice(0, defaults).map((_, i) => i)).slice(0, WATCH_MAX).map((i) => cands[i]!);
   if (picked.length === 0) return 1;
   const res = await subscribePackages(o.cwd, ctx.appDir, ctx.key, picked, o.fetch);
+  const [a, b, c, d] = [res.created.length, res.already.length, res.no_data.length, res.not_done.length];
   io.output.write(
-    ko
-      ? `새로 감시 ${res.created.length} · 이미 감시 중 ${res.already.length} · 데이터 없음 ${res.no_data.length} · 못 함 ${res.not_done.length}\n`
-      : `Now watching ${res.created.length} · already ${res.already.length} · no data ${res.no_data.length} · not done ${res.not_done.length}\n`,
+    L(l, {
+      ko: `새로 감시 ${a} · 이미 감시 중 ${b} · 데이터 없음 ${c} · 못 함 ${d}\n`,
+      en: `Now watching ${a} · already ${b} · no data ${c} · not done ${d}\n`,
+      zh: `新订阅 ${a} · 已订阅 ${b} · 无数据 ${c} · 未完成 ${d}\n`,
+    }),
   );
   if (res.stopped === "subscription_limit") {
-    io.output.write(ko ? `구독 상한(${res.limit}개)에 닿았습니다. 웹에서 구독을 정리하세요: ${web(o.lang, "/settings/notifications")}\n` : `Subscription limit (${res.limit}) reached. Manage subscriptions on the web: ${web(o.lang, "/settings/notifications")}\n`);
+    io.output.write(
+      L(l, {
+        ko: `구독 상한(${res.limit}개)에 닿았습니다. 웹에서 구독을 정리하세요: ${subs}\n`,
+        en: `Subscription limit (${res.limit}) reached. Manage subscriptions on the web: ${subs}\n`,
+        zh: `已达到订阅上限（${res.limit} 个）。请在网页上管理订阅：${subs}\n`,
+      }),
+    );
   } else if (res.stopped) {
-    io.output.write(ko ? `중단: ${res.stopped}\n` : `Stopped: ${res.stopped}\n`);
+    io.output.write(L(l, { ko: `중단: ${res.stopped}\n`, en: `Stopped: ${res.stopped}\n`, zh: `已中止：${res.stopped}\n` }));
   }
   return res.stopped && res.stopped !== "subscription_limit" ? 1 : 0;
 }
@@ -207,25 +237,40 @@ export async function trackCommand(io: TtyIO, o: CommandOptions): Promise<number
 async function track(io: TtyIO, o: CommandOptions, ask: (q: string) => Promise<string>): Promise<number> {
   const ctx = await keyContext(io, o);
   if (!ctx) return 1;
-  const ko = o.lang === "ko";
+  const l = o.lang;
   const unique = await trackRows(o.cwd, ctx.appDir);
   if (unique.length === 0) {
-    io.output.write(ko ? "등록할 CVE가 없습니다(GHSA 전용 항목은 `checkback watch`로 패키지를 감시하세요).\n" : "No CVEs to register (for GHSA-only items, watch the package with `checkback watch`).\n");
+    io.output.write(
+      L(l, {
+        ko: "등록할 CVE가 없습니다(GHSA 전용 항목은 `checkback watch`로 패키지를 감시하세요).\n",
+        en: "No CVEs to register (for GHSA-only items, watch the package with `checkback watch`).\n",
+        zh: "没有可加入的 CVE（只有 GHSA 的项目，请用 `checkback watch` 订阅该包）。\n",
+      }),
+    );
     return 1;
   }
   const reg = await registeredCves(ctx.appDir, ctx.key, unique.map((u) => u.cve), o.fetch);
   if (!reg.ok) {
-    io.output.write(ko ? `조치 대장을 읽지 못했습니다: ${reg.kind}\n` : `Could not read the remediation tracker: ${reg.kind}\n`);
+    io.output.write(
+      L(l, { ko: `조치 대장을 읽지 못했습니다: ${reg.kind}\n`, en: `Could not read the remediation tracker: ${reg.kind}\n`, zh: `无法读取处置台账：${reg.kind}\n` }),
+    );
     return 1;
   }
   const registered = reg.set;
-  io.output.write(`${unique.map((u, i) => `${String(i + 1).padStart(3)}) ${u.cve} · ${u.pkg}@${u.version}${registered.has(u.cve) ? (ko ? " · 등록됨" : " · registered") : ""}`).join("\n")}\n`);
-  const answer = await ask(ko ? "등록할 번호(예: 1,3 · all · q=취소): " : "Numbers to register (e.g. 1,3 · all · q=cancel): ");
+  const already = L(l, { ko: " · 등록됨", en: " · registered", zh: " · 已加入" });
+  io.output.write(`${unique.map((u, i) => `${String(i + 1).padStart(3)}) ${u.cve} · ${u.pkg}@${u.version}${registered.has(u.cve) ? already : ""}`).join("\n")}\n`);
+  const answer = await ask(
+    L(l, { ko: "등록할 번호(예: 1,3 · all · q=취소): ", en: "Numbers to register (e.g. 1,3 · all · q=cancel): ", zh: "要加入的编号（例如 1,3 · all · q=取消）：" }),
+  );
   if (!answer || /^q/i.test(answer)) return 1;
   const picked = (/^all$/i.test(answer) ? unique.map((_, i) => i) : parseSelection(answer, unique.length)).map((i) => unique[i]!).filter((u) => !registered.has(u.cve));
   const r = await registerCves(ctx.appDir, ctx.key, picked, o.fetch);
-  if (r.error) io.output.write(ko ? `중단: ${r.error.cve} — ${r.error.kind}\n` : `Stopped: ${r.error.cve} — ${r.error.kind}\n`);
-  io.output.write(ko ? `조치 대장 등록 ${r.ok}건 · ${web(o.lang, "/settings/remediations")}\n` : `Registered ${r.ok} · ${web(o.lang, "/settings/remediations")}\n`);
+  if (r.error) {
+    const { cve, kind } = r.error;
+    io.output.write(L(l, { ko: `중단: ${cve} — ${kind}\n`, en: `Stopped: ${cve} — ${kind}\n`, zh: `已中止：${cve} — ${kind}\n` }));
+  }
+  const tracker = web(l, "/settings/remediations");
+  io.output.write(L(l, { ko: `조치 대장 등록 ${r.ok}건 · ${tracker}\n`, en: `Registered ${r.ok} · ${tracker}\n`, zh: `已加入处置台账 ${r.ok} 项 · ${tracker}\n` }));
   return 0;
 }
 
@@ -284,32 +329,33 @@ export async function ignoreCommand(io: TtyIO, o: CommandOptions & { remove?: bo
 }
 
 async function ignore(io: TtyIO, o: CommandOptions & { remove?: boolean }, ask: (q: string) => Promise<string>): Promise<number> {
-  const ko = o.lang === "ko";
+  const l = o.lang;
   const appDir = o.appDir ?? defaultAppDir();
   if (o.remove) {
     const list = await listIgnores(o.cwd, appDir);
     if (!list.length) {
-      io.output.write(ko ? "무시 목록이 비어 있습니다.\n" : "The ignore list is empty.\n");
+      io.output.write(L(l, { ko: "무시 목록이 비어 있습니다.\n", en: "The ignore list is empty.\n", zh: "忽略列表为空。\n" }));
       return 1;
     }
     io.output.write(`${list.map((e, i) => `${String(i + 1).padStart(3)}) ${e.label ?? e.id} · ${e.reason} · ${e.at}`).join("\n")}\n`);
-    const picked = parseSelection(await ask(ko ? "해제할 번호: " : "Numbers to un-ignore: "), list.length);
+    const picked = parseSelection(await ask(L(l, { ko: "해제할 번호: ", en: "Numbers to un-ignore: ", zh: "要取消忽略的编号：" })), list.length);
     for (const i of picked) await removeIgnore(o.cwd, list[i]!.id, appDir);
-    io.output.write(ko ? `${picked.length}개 해제\n` : `Removed ${picked.length}\n`);
-    return picked.length ? 0 : 1;
+    const n = picked.length;
+    io.output.write(L(l, { ko: `${n}개 해제\n`, en: `Removed ${n}\n`, zh: `已取消忽略 ${n} 项\n` }));
+    return n ? 0 : 1;
   }
   const findings = (await readLastScan(o.cwd, appDir))?.findings ?? [];
   if (!findings.length) {
-    io.output.write(ko ? "먼저 검사하세요(무시할 항목 없음).\n" : "Run a scan first (nothing to ignore).\n");
+    io.output.write(L(l, { ko: "먼저 검사하세요(무시할 항목 없음).\n", en: "Run a scan first (nothing to ignore).\n", zh: "请先扫描（没有可忽略的项目）。\n" }));
     return 1;
   }
   io.output.write(`${findings.map((f, i) => `${String(i + 1).padStart(3)}) ${f.severity}/${f.confidence} · ${f.title} · ${f.location ? `${f.location.file}${f.location.line ? `:${f.location.line}` : ""}` : "-"}`).join("\n")}\n`);
-  const picked = parseSelection(await ask(ko ? "무시할 번호: " : "Numbers to ignore: "), findings.length);
+  const picked = parseSelection(await ask(L(l, { ko: "무시할 번호: ", en: "Numbers to ignore: ", zh: "要忽略的编号：" })), findings.length);
   if (!picked.length) return 1;
-  const reason = await ask(ko ? "사유(필수): " : "Reason (required): ");
+  const reason = await ask(L(l, { ko: "사유(필수): ", en: "Reason (required): ", zh: "原因（必填）：" }));
   if (!reason) return 1;
   for (const i of picked) await addIgnore(o.cwd, findings[i]!.id, reason, appDir);
-  io.output.write(ko ? `${picked.length}개 무시\n` : `Ignored ${picked.length}\n`);
+  io.output.write(L(l, { ko: `${picked.length}개 무시\n`, en: `Ignored ${picked.length}\n`, zh: `已忽略 ${picked.length} 项\n` }));
   return 0;
 }
 
@@ -337,7 +383,7 @@ export const COMMANDS: CmdSpec[] = [
     name: "scan",
     desc: "Scan the current folder and print what to fix",
     opts: [
-      { flag: "--lang", arg: "en|ko", values: ["en", "ko"], desc: "Language of the result" },
+      { flag: "--lang", arg: "en|ko|zh", values: ["en", "ko", "zh"], desc: "Language of the result (zh = Simplified Chinese)" },
       { flag: "--template", arg: "<file>", desc: "Use a template YAML file instead of the default" },
       { flag: "--json", desc: "Print JSON (default when stdout is not a terminal)" },
       { flag: "--text", desc: "Print the readable report (default in a terminal)" },
@@ -458,6 +504,7 @@ const SEV_STYLE: Record<Severity, Style> = { critical: ["bold", "red"], high: ["
 const SEV_NAME: Record<Lang, Record<Severity, string>> = {
   en: { critical: "CRITICAL", high: "HIGH", medium: "MEDIUM" },
   ko: { critical: "긴급", high: "높음", medium: "보통" },
+  zh: { critical: "严重", high: "高危", medium: "中危" },
 };
 
 /** One-line description of a finding: the first sentence of the rule text or builtin judgment text. */
@@ -465,14 +512,15 @@ function describe(f: Finding, tpl: Template, lang: Lang): string {
   const rule = tpl.rules.find((r) => r.id === f.rule_id);
   const pick = (t?: LocalizedText): string | undefined => t?.[lang] ?? t?.en ?? t?.ko;
   const text = pick(rule && "description" in rule ? rule.description : undefined) ?? findingDescription(f, lang) ?? "";
-  return (text.split(/(?<=[.!?])\s+/)[0] ?? "").replace(/\{[a-z_]+\}/g, "…");
+  return (text.split(/(?<=[.!?])\s+|(?<=[。！？])/)[0] ?? "").replace(/\{[a-z_]+\}/g, "…");
 }
 
 /** "next 14.1.0 → upgrade to 15.5.28 or later" — same wording as the GUI card. */
-function pkgLine(f: Finding, ko: boolean): string {
+function pkgLine(f: Finding, lang: Lang): string {
   const head = `${f.package}${f.version ? ` ${f.version}` : ""}`;
-  if (!f.fixed_version) return head;
-  return ko ? `${head} → ${f.fixed_version} 이상으로 올리기` : `${head} → upgrade to ${f.fixed_version} or later`;
+  const v = f.fixed_version;
+  if (!v) return head;
+  return L(lang, { ko: `${head} → ${v} 이상으로 올리기`, en: `${head} → upgrade to ${v} or later`, zh: `${head} → 升级到 ${v} 或更高版本` });
 }
 
 /** Dependency rules that did not fully run: `--fail-on` cannot vouch for them (N1). Null when they all ran. */
@@ -480,28 +528,36 @@ export function depsUncheckedWarning(r: ScanResult, lang: Lang = "en"): string |
   const why: string[] = [...new Set(r.checked.filter((c) => (c.rule_id === "vulnerable-deps" || c.rule_id === "hallucinated-package") && c.reason && c.reason !== "disabled").map((c) => c.reason!))];
   if (r.findings.some((f) => f.notes?.includes("priority_pending"))) why.push("priority_pending");
   if (!why.length) return null;
-  return lang === "ko"
-    ? `checkback: 의존성 검사가 끝까지 실행되지 않아(${why.join(", ")}) --fail-on 판정에 들어가지 않았습니다. 네트워크와 동의가 있는 상태에서 다시 검사하세요`
-    : `checkback: the dependency check did not fully run (${why.join(", ")}), so --fail-on does not cover it; scan again with network and consent`;
+  const w = why.join(", ");
+  return L(lang, {
+    ko: `checkback: 의존성 검사가 끝까지 실행되지 않아(${w}) --fail-on 판정에 들어가지 않았습니다. 네트워크와 동의가 있는 상태에서 다시 검사하세요`,
+    en: `checkback: the dependency check did not fully run (${w}), so --fail-on does not cover it; scan again with network and consent`,
+    zh: `checkback: 依赖检查没有完整运行（${w}），因此 --fail-on 未覆盖它；请在有网络并已同意外部查询的情况下重新扫描`,
+  });
 }
 
 /** `--fail-on` threshold message (stderr). */
 export function failOnMessage(n: number, threshold: FailOn, lang: Lang = "en"): string {
-  if (lang === "ko") return `checkback: ${threshold === "low" ? "심각도와 관계없이" : `${SEV_NAME.ko[threshold as Severity]} 이상`} 고칠 일 ${n}개 (--fail-on ${threshold})`;
-  return `checkback: ${n} ${n === 1 ? "thing" : "things"} to fix at ${threshold === "low" ? "any severity" : `${threshold} or above`} (--fail-on ${threshold})`;
+  const any = threshold === "low";
+  const sev = SEV_NAME[lang][threshold as Severity];
+  return L(lang, {
+    ko: `checkback: ${any ? "심각도와 관계없이" : `${sev} 이상`} 고칠 일 ${n}개 (--fail-on ${threshold})`,
+    en: `checkback: ${n} ${n === 1 ? "thing" : "things"} to fix at ${any ? "any severity" : `${threshold} or above`} (--fail-on ${threshold})`,
+    zh: `checkback: ${any ? "不限严重程度，" : `${sev}及以上`}待修复 ${n} 项 (--fail-on ${threshold})`,
+  });
 }
 
 const RECHECK_NAME: Record<Lang, Record<RecheckStatus, string>> = {
   // same wording as the GUI cards (web/src/i18n.ts card.recheck) and the README "Re-check states" table
   ko: { resolved: "해결됨", remaining: "아직 남음", new: "새로 생김", same_key: "같은 키 남음", moved: "옮겨짐 의심", downgraded: "확신도 낮아짐", lock_mismatch: "확인 필요(lock)", not_checked: "검사 안 함" },
   en: { resolved: "Resolved", remaining: "Still there", new: "New", same_key: "Same key remains", moved: "Possibly moved", downgraded: "Confidence lowered", lock_mismatch: "Check (lock)", not_checked: "Not checked" },
+  zh: { resolved: "已解决", remaining: "仍存在", new: "新增", same_key: "同一密钥仍在", moved: "疑似已移动", downgraded: "可信度降低", lock_mismatch: "需确认（lock）", not_checked: "未检查" },
 };
 
 /** Re-check summary + resolved items for the text report; empty without a baseline. */
 function compareLines(r: ScanResult, lang: Lang): string[] {
   const c = r.compare;
   if (!c) return [];
-  const ko = lang === "ko";
   const names = RECHECK_NAME[lang];
   const always: RecheckStatus[] = ["resolved", "remaining", "same_key", "new"];
   const extra: RecheckStatus[] = ["moved", "downgraded", "lock_mismatch", "not_checked"];
@@ -509,7 +565,12 @@ function compareLines(r: ScanResult, lang: Lang): string[] {
   const live = r.findings.filter((f) => f.confidence !== "info");
   const count = (s: RecheckStatus): number => (s === "resolved" ? c.resolved.filter((x) => x.confidence !== "info").length : live.filter((f) => f.recheck === s).length);
   const shown = [...always, ...extra.filter((s) => count(s) > 0)];
-  const head = ko ? `재검사(${c.baseline === "fix_request" ? "수정 요청 기준" : "직전 검사 기준"})` : `Re-check (against ${c.baseline === "fix_request" ? "the fix request" : "the previous scan"})`;
+  const fixReq = c.baseline === "fix_request";
+  const head = L(lang, {
+    ko: `재검사(${fixReq ? "수정 요청 기준" : "직전 검사 기준"})`,
+    en: `Re-check (against ${fixReq ? "the fix request" : "the previous scan"})`,
+    zh: `复查（对比${fixReq ? "修复请求" : "上一次扫描"}）`,
+  });
   return [
     `${head}: ${shown.map((s) => `${names[s]} ${count(s)}`).join(" · ")}`,
     ...c.resolved.map((x) => {
@@ -525,10 +586,10 @@ function compareLines(r: ScanResult, lang: Lang): string[] {
  * never secret values or masked values (same exposure as the JSON output).
  */
 export function formatScan(r: ScanResult, tpl: Template, lang: Lang, color: boolean): string {
-  const ko = lang === "ko";
+  const T = (t: Record<Lang, string>): string => L(lang, t);
   const paint = (style: Style, s: string): string => (color ? styleText(style, s, { validateStream: false }) : s); // caller decided TTY/NO_COLOR
   const names = SEV_NAME[lang];
-  const cells = (s: string): number => s.length * (ko ? 2 : 1); // Hangul labels are double width
+  const cells = (s: string): number => s.length * (lang === "en" ? 1 : 2); // Hangul and Han labels are double width
   const width = Math.max(...Object.values(names).map(cells));
   const pad = " ".repeat(width + 4);
   const fix = r.findings.filter((f) => f.confidence === "confirmed");
@@ -537,21 +598,29 @@ export function formatScan(r: ScanResult, tpl: Template, lang: Lang, color: bool
   const item = (f: Finding): string[] => {
     // Other places of the same finding: every lock with this package version, other lines of the same value.
     const others = (f.related ?? []).filter((x) => x !== f.location?.file);
-    const more = others.length ? (ko ? ` 외 ${others.length}곳: ` : ` +${others.length} more: `) + others.slice(0, 3).join(", ") + (others.length > 3 ? ", …" : "") : "";
+    const k = others.length;
+    const more = k ? T({ ko: ` 외 ${k}곳: `, en: ` +${k} more: `, zh: ` 等另外 ${k} 处：` }) + others.slice(0, 3).join(", ") + (k > 3 ? ", …" : "") : "";
     const where = f.location ? `${f.location.file}${f.location.line ? `:${f.location.line}` : ""}${more}` : "";
     const desc = describe(f, tpl, lang);
     const tag = f.recheck && f.recheck !== "remaining" ? `  [${RECHECK_NAME[lang][f.recheck]}]` : "";
     return [
       `  ${paint(SEV_STYLE[f.severity], names[f.severity])}${" ".repeat(width - cells(names[f.severity]))}  ${paint("bold", f.title)}${tag}`,
-      ...(f.package ? [pad + pkgLine(f, ko)] : []),
+      ...(f.package ? [pad + pkgLine(f, lang)] : []),
       ...(where ? [pad + paint("dim", where)] : []),
       ...(desc ? [pad + desc] : []),
     ];
   };
   const sevLine = (["critical", "high", "medium"] as const).map((s) => `${names[s]} ${fix.filter((f) => f.severity === s).length}`).join(" · ");
   const out = [
-    `${paint("bold", ko ? `고칠 일 ${fix.length}개` : `${fix.length} ${fix.length === 1 ? "thing" : "things"} to fix`)}   ${sevLine}`,
-    paint("dim", ko ? `확인 필요 ${review.length}개 · 참고 ${info}개 · 검사한 파일 ${r.stats.files}개` : `${review.length} to review · ${info} for information · ${r.stats.files} files checked`),
+    `${paint("bold", T({ ko: `고칠 일 ${fix.length}개`, en: `${fix.length} ${fix.length === 1 ? "thing" : "things"} to fix`, zh: `待修复 ${fix.length} 项` }))}   ${sevLine}`,
+    paint(
+      "dim",
+      T({
+        ko: `확인 필요 ${review.length}개 · 참고 ${info}개 · 검사한 파일 ${r.stats.files}개`,
+        en: `${review.length} to review · ${info} for information · ${r.stats.files} files checked`,
+        zh: `待确认 ${review.length} 项 · 参考 ${info} 项 · 已检查 ${r.stats.files} 个文件`,
+      }),
+    ),
     "",
   ];
   // What this scan could not check goes first, so a short report is never read as "safe" (N1).
@@ -559,16 +628,27 @@ export function formatScan(r: ScanResult, tpl: Template, lang: Lang, color: bool
   if (notices.length) out.push(...notices.map((n) => paint(["bold", "yellow"], `! ${n}`)), "");
   const cmp = compareLines(r, lang);
   if (cmp.length) out.push(...cmp, "");
-  if (fix.length) out.push(paint("bold", ko ? "고칠 일" : "To fix"), ...fix.flatMap(item), "");
-  if (review.length) out.push(paint("bold", ko ? "확인 필요" : "To review"), ...review.flatMap(item), "");
+  if (fix.length) out.push(paint("bold", T({ ko: "고칠 일", en: "To fix", zh: "待修复" })), ...fix.flatMap(item), "");
+  if (review.length) out.push(paint("bold", T({ ko: "확인 필요", en: "To review", zh: "待确认" })), ...review.flatMap(item), "");
   if (!fix.length && !review.length) {
-    const empty = r.stats.files === 0 ? (ko ? "검사할 파일이 없습니다. 프로젝트 폴더에서 실행하세요." : "No files to check. Run it from your project folder.") : ko ? "이 도구의 규칙에 걸린 항목이 없습니다." : "Nothing matched this tool's rules.";
+    const empty =
+      r.stats.files === 0
+        ? T({ ko: "검사할 파일이 없습니다. 프로젝트 폴더에서 실행하세요.", en: "No files to check. Run it from your project folder.", zh: "没有可检查的文件。请在项目文件夹中运行。" })
+        : T({ ko: "이 도구의 규칙에 걸린 항목이 없습니다.", en: "Nothing matched this tool's rules.", zh: "没有命中本工具规则的项目。" });
     out.push(empty, "");
   }
   out.push(
-    paint("bold", ko ? "다음 할 일" : "Next"),
-    ko ? "  npx checkback         화면에서 고칠 항목을 고르고 AI에 붙여 넣을 수정 지시문을 복사하세요" : "  npx checkback         open the results page, pick findings and copy fix prompts for your AI",
-    ko ? "  npx checkback scan    AI가 고친 뒤 다시 검사해 남은 것을 확인하세요" : "  npx checkback scan    scan again after the fix to see what is left",
+    paint("bold", T({ ko: "다음 할 일", en: "Next", zh: "下一步" })),
+    T({
+      ko: "  npx checkback         화면에서 고칠 항목을 고르고 AI에 붙여 넣을 수정 지시문을 복사하세요",
+      en: "  npx checkback         open the results page, pick findings and copy fix prompts for your AI",
+      zh: "  npx checkback         打开结果页面，选择要修复的项目，复制修复提示词给你的 AI",
+    }),
+    T({
+      ko: "  npx checkback scan    AI가 고친 뒤 다시 검사해 남은 것을 확인하세요",
+      en: "  npx checkback scan    scan again after the fix to see what is left",
+      zh: "  npx checkback scan    AI 修复后再次扫描，查看还剩什么",
+    }),
     paint("dim", `  ${DISCLAIMER[lang].split("\n")[0]}`),
     "",
   );

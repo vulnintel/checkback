@@ -30,9 +30,11 @@ if (parsed.kind === "help") {
     const lang = await userLang();
     const g = await startGui({ cwd: process.cwd(), onIdle: () => process.exit(0) });
     process.stdout.write(
-      lang === "ko"
-        ? `checkback 화면: ${g.url}\n(이 주소는 이번 실행에서만 쓸 수 있습니다. 끝내려면 Ctrl+C)\n`
-        : `checkback screen: ${g.url}\n(This address works for this run only. Press Ctrl+C to stop.)\n`,
+      {
+        ko: `checkback 화면: ${g.url}\n(이 주소는 이번 실행에서만 쓸 수 있습니다. 끝내려면 Ctrl+C)\n`,
+        en: `checkback screen: ${g.url}\n(This address works for this run only. Press Ctrl+C to stop.)\n`,
+        zh: `checkback 页面：${g.url}\n（此地址仅在本次运行中有效。按 Ctrl+C 结束。）\n`,
+      }[lang],
     );
     if (!opts["--no-open"]) openBrowser(g.url);
   } else if (cmd === "mcp") {

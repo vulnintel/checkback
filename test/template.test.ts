@@ -34,23 +34,24 @@ describe("default template", () => {
     }
   });
 
-  it("every engine rule has ko/en name, description, fix_prompt; prompts follow §6-3", async () => {
+  it("every engine rule has ko/en/zh name, description, fix_prompt; prompts follow §6-3", async () => {
     const t = await loadDefaultTemplate();
     for (const r of t.rules) {
       if (r.type === "builtin" || r.type === "ai_check") continue;
-      for (const lang of ["ko", "en"] as const) {
+      for (const lang of ["ko", "en", "zh"] as const) {
         expect(r.name?.[lang], `${r.id} name.${lang}`).toBeTruthy();
         expect(r.description?.[lang], `${r.id} description.${lang}`).toBeTruthy();
         const fp = r.fix_prompt?.[lang];
         expect(fp, `${r.id} fix_prompt.${lang}`).toBeTruthy();
         for (const m of fp!.matchAll(/\{([^{}]*)\}/g)) expect(FIX_PROMPT_VARS.has(m[1]!)).toBe(true);
         // No package install/add instructions (§6-3).
-        expect(fp).not.toMatch(/npm (i|install)\b|pnpm add|yarn add|pip install|설치하세요|install (the|a|new)/i);
+        expect(fp).not.toMatch(/npm (i|install)\b|pnpm add|yarn add|pip install|설치하세요|安装|install (the|a|new)/i);
       }
       // Secret items: first instruction is revoke/reissue (§6-3).
       if (r.id.startsWith("secret-") || r.id === "env-committed" || r.id === "key-file-committed") {
         expect(r.fix_prompt!.ko).toMatch(/폐기|바꿉니다/);
         expect(r.fix_prompt!.en).toMatch(/revoke|roll|deactivate|changes its password/i);
+        expect(r.fix_prompt!.zh).toMatch(/由人工.*(吊销|轮换|停用|修改其密码)/);
       }
     }
   });

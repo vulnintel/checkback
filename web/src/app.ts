@@ -3,7 +3,7 @@
 
 import { api, initSession } from "./api.js";
 import { h, replace } from "./dom.js";
-import { LANG_NAMES, t } from "./i18n.js";
+import { LANG_NAMES, t, type UiLang } from "./i18n.js";
 import { changeLang, go, onRender, refreshState, report, S, type View } from "./state.js";
 import { resultView } from "./views/results.js";
 import { sbomView, settingsView } from "./views/settings.js";
@@ -37,7 +37,7 @@ function header(): HTMLElement {
         "aria-label": t().langLabel,
         onchange: (e: Event) => void changeLang((e.target as HTMLSelectElement).value),
       },
-      (["ko", "en"] as const).map((l) => h("option", { value: l, selected: S.st?.lang === l }, LANG_NAMES[l])),
+      (Object.keys(LANG_NAMES) as UiLang[]).map((l) => h("option", { value: l, selected: S.st?.lang === l }, LANG_NAMES[l])),
     ),
   );
 }

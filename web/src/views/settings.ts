@@ -2,7 +2,7 @@
 
 import { api, ApiFail } from "../api.js";
 import { download, extLink, h, replace, toast } from "../dom.js";
-import { LANG_NAMES, t } from "../i18n.js";
+import { LANG_NAMES, t, type UiLang } from "../i18n.js";
 import { changeLang, changeTheme, go, refreshState, report, S } from "../state.js";
 import { dataTable } from "./start.js";
 
@@ -76,7 +76,7 @@ export function settingsView(): HTMLElement {
           "aria-label": t().langLabel,
           onchange: (e: Event) => void changeLang((e.target as HTMLSelectElement).value),
         },
-        (["ko", "en"] as const).map((l) => h("option", { value: l, selected: st.lang === l }, LANG_NAMES[l])),
+        (Object.keys(LANG_NAMES) as UiLang[]).map((l) => h("option", { value: l, selected: st.lang === l }, LANG_NAMES[l])),
       ),
     ),
     section(

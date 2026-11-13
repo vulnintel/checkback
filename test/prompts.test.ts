@@ -46,7 +46,7 @@ describe("stage 6 fix prompts (§6-3)", () => {
     const { findings, keys } = await fixture();
     const tpl = await loadDefaultTemplate();
     const engine = findings.filter((f) => f.confidence !== "info").slice(0, 10);
-    for (const lang of ["ko", "en"] as const) {
+    for (const lang of ["ko", "en", "zh"] as const) {
       const texts = [...engine.map((f) => fixPromptText([f], tpl, lang).text), fixPromptText(engine, tpl, lang).text];
       for (const t of texts) {
         expect(t).not.toMatch(/ignore previous instructions/);
@@ -104,13 +104,13 @@ describe("stage 6 fix prompts (§6-3)", () => {
     const dep = byRule({ findings } as never, "vulnerable-deps")[0]!;
     const hall = findings.find((f) => f.rule_id === "hallucinated-package")!;
     const key = byRule({ findings } as never, "secret-openai")[0]!;
-    const LOCK = /lock 파일을 손으로 고치지 마세요|Do not edit (the )?lock files? by hand/g;
-    for (const lang of ["ko", "en"] as const) {
+    const LOCK = /lock 파일을 손으로 고치지 마세요|Do not edit (the )?lock files? by hand|不要手动修改 lock 文件/g;
+    for (const lang of ["ko", "en", "zh"] as const) {
       expect(fixPromptText([dep], tpl, lang).text.match(LOCK)).toHaveLength(1);
       expect(fixPromptText([hall], tpl, lang).text.match(LOCK)).toHaveLength(1); // its fix does not say it → 4) does
       expect(fixPromptText([key], tpl, lang).text).not.toMatch(LOCK);
-      expect(fixPromptText([key], tpl, lang).text).toMatch(/새 패키지를 설치하지 마세요|Do not install new packages/);
-      const common = (fs: Finding[]): string => fixPromptText(fs, tpl, lang).text.split("\n").find((l) => /^(공통 — 하지 말 것|For all items — do not)/.test(l))!;
+      expect(fixPromptText([key], tpl, lang).text).toMatch(/새 패키지를 설치하지 마세요|Do not install new packages|不要安装新的包/);
+      const common = (fs: Finding[]): string => fixPromptText(fs, tpl, lang).text.split("\n").find((l) => /^(공통 — 하지 말 것|For all items — do not|所有项目 — 不要)/.test(l))!;
       expect(common([key, findings.find((f) => f.rule_id === "debug-flask")!])).not.toMatch(LOCK);
       expect(common([key, hall])).toMatch(LOCK);
       expect(common([key, dep])).not.toMatch(LOCK); // the dependency item already says it in its own step 3

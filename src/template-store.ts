@@ -107,7 +107,7 @@ export async function duplicateTemplate(appDir: string, from: string, lang: Lang
       ? { imported: false, mine: [], bundled: src.rules.flatMap((r) => (r.type === "ai_check" ? [aiHash(r)] : [])) }
       : await readMeta(appDir, from);
   const id = await freeId(appDir, `${src.id}-copy`);
-  const name = `${src.name} ${lang === "ko" ? "(복사본)" : "(copy)"}`.slice(0, 80);
+  const name = `${src.name} ${{ ko: "(복사본)", en: "(copy)", zh: "（副本）" }[lang]}`.slice(0, 80);
   return save(appDir, { ...src, id, name, based_on: from === "default" ? `default@${VERSION}` : src.id }, srcMeta);
 }
 

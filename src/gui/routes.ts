@@ -23,7 +23,7 @@ import {
   loadTemplateById, readMeta, renameTemplate, saveAiCheck, setRuleEnabled, StoreError,
 } from "../template-store.js";
 import { TemplateError } from "../template.js";
-import type { Finding, Lang, LocalizedText, Rule, ScanResult, Severity, Template } from "../types.js";
+import { LANGS, type Finding, type Lang, type LocalizedText, type Rule, type ScanResult, type Severity, type Template } from "../types.js";
 
 export interface GuiContext {
   /** Scan target: the folder checkback was started in. Fixed for the server's life (§3). */
@@ -66,7 +66,7 @@ function guiFinding(f: Finding, tpl: Template, imported: boolean, lang: Lang): R
     ...rest,
     title: name, // the engine title is this same text in the scan's language; follow the current one
     name,
-    summary: description.split(/(?<=[.!?。])\s/)[0] ?? description,
+    summary: description.split(/(?<=[.!?])\s|(?<=[。！？])/)[0] ?? description, // Chinese puts no space after 。
     description,
     external_text: imported && !!rule && rule.type !== "builtin",
     revoke: needsRevoke(f),
@@ -136,7 +136,7 @@ export function createRoutes(ctx: GuiContext): { routes: Record<string, Route>; 
     },
     async "POST /api/settings"(b) {
       const patch: Partial<LocalConfig> = {};
-      if (b.lang === "ko" || b.lang === "en") patch.lang = b.lang;
+      if (LANGS.includes(b.lang as Lang)) patch.lang = b.lang as Lang;
       if (b.theme === "light" || b.theme === "dark") patch.theme = b.theme;
       else if (b.theme === "system") patch.theme = undefined; // dropped from the file: follow the OS again
       if (typeof b.external === "object" && b.external !== null) {

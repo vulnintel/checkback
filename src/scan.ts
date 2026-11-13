@@ -23,7 +23,7 @@ import { envHasOnlyPublicValues, hiddenSourcemapConfig, LATE_RULES, REFINERS } f
 import { RegexRunner, RULE_TOTAL_LIMIT_MS, type RawMatch } from "./regex-runner.js";
 import { allowlisted, decodeJwtPayload, fingerprint, isPlaceholder, mask } from "./secrets.js";
 import type {
-  BuiltinRule, CheckedRule, Confidence, ConfigRule, FileRule, Finding, Lang, NoteCode, PatternRule, Rule, ScanResult, ScanStats, Severity, Template,
+  BuiltinRule, CheckedRule, Confidence, ConfigRule, FileRule, Finding, Lang, LocalizedText, NoteCode, PatternRule, Rule, ScanResult, ScanStats, Severity, Template,
 } from "./types.js";
 
 export const ENGINE_VERSION = VERSION;
@@ -81,6 +81,7 @@ export class ProjectDirError extends Error {}
 const PROJECT_DIR_MSG: Record<Lang, string> = {
   ko: "프로젝트 폴더를 알 수 없음 — checkback이 프로젝트가 아니라 Claude Code 플러그인 폴더에서 실행되었습니다. 검사 결과가 없다는 뜻이 아닙니다. 프로젝트 폴더에서 Claude Code를 다시 시작하거나, 터미널에서 프로젝트 폴더로 이동해 `npx checkback scan`을 실행하세요.",
   en: "Project folder unknown — checkback is running in the Claude Code plugin folder, not in your project. This is not a clean result. Restart Claude Code from your project folder, or run `npx checkback scan` in a terminal inside the project folder.",
+  zh: "无法确定项目文件夹 — checkback 正在 Claude Code 插件文件夹中运行，而不是在你的项目中。这并不代表没有发现问题。请从项目文件夹重新启动 Claude Code，或在终端中进入项目文件夹后运行 `npx checkback scan`。",
 };
 
 async function isPluginFolder(root: string): Promise<boolean> {
@@ -245,7 +246,7 @@ class Run {
     return createHmac("sha256", this.key).update(value).digest("hex");
   }
 
-  private title(name: { ko?: string; en?: string } | undefined, fallback: string): string {
+  private title(name: LocalizedText | undefined, fallback: string): string {
     return name?.[this.lang] ?? name?.en ?? name?.ko ?? fallback;
   }
 

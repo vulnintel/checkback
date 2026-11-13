@@ -33,14 +33,14 @@ describe("B2 Supabase anon key is public, not a service key", () => {
     expect(r.findings.filter((f) => f.location?.file === "src/pub.ts")).toEqual([]);
   });
 
-  it("anon rule text keeps the key in the browser (ko/en)", async () => {
+  it("anon rule text keeps the key in the browser (ko/en/zh)", async () => {
     const { loadDefaultTemplate } = await import("../src/index.js");
     const rule = (await loadDefaultTemplate()).rules.find((x) => x.id === "supabase-anon-key")!;
     if (rule.type !== "pattern") throw new Error("type");
     expect(rule.name!.ko).toContain("브라우저에 있어도 정상");
-    for (const lang of ["ko", "en"] as const) {
+    for (const lang of ["ko", "en", "zh"] as const) {
       expect(rule.description![lang]).toMatch(/RLS/);
-      expect(rule.fix_prompt![lang]).not.toMatch(/폐기|재발급|revoke|reissue|rotate/i);
+      expect(rule.fix_prompt![lang]).not.toMatch(/폐기|재발급|revoke|reissue|rotate|吊销|签发|轮换/i);
     }
   });
 });
