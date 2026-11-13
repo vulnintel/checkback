@@ -308,11 +308,12 @@ describe("vulnerable-deps (§7-3)", () => {
     const net = mockNet({ ...osvMock, vi: { "CVE-2021-23337": { vpi_level: 5, is_kev: true, epss_score: 0.4 }, "CVE-2021-44906": { vpi_level: 3, is_kev: false } } });
     const r = await scanDefault(vulnProject(), { appDir: await consentedAppDir(), fetch: net.fetch, now, lang: "ko" });
     const v = byRule(r, "vulnerable-deps");
-    // KEV → critical; otherwise the advisory's severity: minimist CVSS 9.8 stays critical, VPI 3 is a badge only.
+    // VPI wins over CVSS once present: minimist CVSS 9.8 but VPI 3 → medium (§7-3 mapping).
     expect(v.map((f) => [f.package, f.severity, f.kev, f.vpi_level, f.fixed_version])).toEqual([
       ["lodash", "critical", true, 5, "4.17.21"],
-      ["minimist", "critical", false, 3, "1.2.6"],
+      ["minimist", "medium", false, 3, "1.2.6"],
     ]);
+    expect(v.some((f) => f.notes?.includes("severity_provisional"))).toBe(false); // priority checked → final
     expect(r.findings[0]!.package).toBe("lodash");
     const vi = net.calls.filter((c) => c.url.includes("vulnintelapp")).map((c) => c.url);
     expect(vi.sort()).toEqual([
@@ -381,22 +382,51 @@ describe("vulnerable-deps (§7-3)", () => {
     expect(net.calls.filter((c) => c.url.includes("vulnintelapp"))).toHaveLength(1); // stopped after 429
   });
 
-  it("N4: the same advisory has the same severity whether or not its priority lookup finished; ko→en reuses the cache", async () => {
+  it("N4: a package whose priority is not complete keeps its OSV/CVSS severity, marked provisional; ko→en reuses the cache", async () => {
     const appDir = await consentedAppDir();
     let net = mockNet({ ...osvMock, vi: { "CVE-2021-23337": { vpi_level: 5, is_kev: false }, "CVE-2021-44906": 500 } });
     let r = await scanDefault(vulnProject(), { appDir, fetch: net.fetch, now, lang: "ko" });
-    // lodash: OSV HIGH stays high with VPI 5; minimist: lookup failed → CVSS 9.8 critical, no VPI badge.
-    expect(byRule(r, "vulnerable-deps").map((f) => [f.package, f.severity, f.vpi_level, f.notes?.includes("priority_failed") ?? false])).toEqual([
-      ["minimist", "critical", undefined, true],
-      ["lodash", "high", 5, false],
+    // minimist: lookup failed → CVSS 9.8 critical, provisional, no VPI badge (complete it would be VPI-mapped, AC25).
+    const row = (f: { package?: string; severity: string; vpi_level?: number; notes?: string[] }): unknown[] => [f.package, f.severity, f.vpi_level, f.notes?.includes("priority_failed") ?? false, f.notes?.includes("severity_provisional") ?? false];
+    expect(byRule(r, "vulnerable-deps").map(row)).toEqual([
+      ["lodash", "critical", 5, false, false],
+      ["minimist", "critical", undefined, true, true],
     ]);
     net = mockNet({ ...osvMock, vi: { "CVE-2021-44906": { vpi_level: 3, is_kev: false } } });
     r = await scanDefault(vulnProject(), { appDir, fetch: net.fetch, now, lang: "en" });
     expect(net.calls.filter((c) => c.url.includes("vulnintelapp")).map((c) => c.url)).toEqual(["https://api.vulnintelapp.com/api/v1/vulnerabilities/CVE-2021-44906?lang=en"]);
-    expect(byRule(r, "vulnerable-deps").map((f) => [f.package, f.severity, f.vpi_level])).toEqual([
-      ["minimist", "critical", 3],
-      ["lodash", "high", 5],
+    expect(byRule(r, "vulnerable-deps").map(row)).toEqual([
+      ["lodash", "critical", 5, false, false],
+      ["minimist", "medium", 3, false, false],
     ]);
+  });
+
+  it("provisional: pending/failed priority marks the OSV/CVSS severity provisional, except KEV (final)", async () => {
+    const prov = (f: { notes?: string[] }): boolean => !!f.notes?.includes("severity_provisional");
+    // 429 → the first lookup fails and the rest wait (pending): every card is provisional.
+    let net = mockNet({ ...osvMock, vi: { "CVE-2021-23337": 429, "CVE-2021-44906": 429 } });
+    let v = byRule(await scanDefault(vulnProject(), { appDir: await consentedAppDir(), fetch: net.fetch, now }), "vulnerable-deps");
+    expect(v.some((f) => f.notes?.includes("priority_pending"))).toBe(true);
+    expect(v.every(prov)).toBe(true);
+    // Public lookup off: no priority is coming, so nothing is provisional.
+    net = mockNet(osvMock);
+    v = byRule(await scanDefault(vulnProject(), { appDir: await consentedAppDir({ vulnintel: false }), fetch: net.fetch, now }), "vulnerable-deps");
+    expect(v.some(prov)).toBe(false);
+    // One ID is KEV, the other failed: critical is final, not provisional.
+    const pkg = { "package.json": pj({ name: "a", dependencies: { lodash: "4.17.20" } }), "package-lock.json": lock({ lodash: "4.17.20" }) };
+    net = mockNet({
+      osv: { "npm:lodash@4.17.20": ["GHSA-35jh-r3h4-6jhm", "GHSA-low"] },
+      vulns: {
+        ...osvMock.vulns,
+        "GHSA-low": { id: "GHSA-low", aliases: ["CVE-2020-1"], database_specific: { severity: "LOW" }, affected: [{ package: { ecosystem: "npm", name: "lodash" }, ranges: [{ events: [{ introduced: "0" }, { fixed: "4.17.21" }] }] }] },
+      },
+      npm: { lodash: {} },
+      vi: { "CVE-2021-23337": { vpi_level: 5, is_kev: true }, "CVE-2020-1": 500 },
+    });
+    v = byRule(await scanDefault(project(pkg), { appDir: await consentedAppDir(), fetch: net.fetch, now }), "vulnerable-deps");
+    expect(v).toMatchObject([{ package: "lodash", severity: "critical", kev: true }]);
+    expect(v[0]!.notes).toContain("priority_failed");
+    expect(prov(v[0]!)).toBe(false);
   });
 
   it("no fixed version, installed version released after the advisory (open-ended range) → review with a note", async () => {

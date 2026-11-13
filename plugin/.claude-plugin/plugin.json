@@ -1,6 +1,6 @@
 {
   "name": "checkback",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Security checks for vibe-coded apps — a plugin for Claude Code",
   "author": {
     "name": "VulnIntel",

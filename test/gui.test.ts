@@ -290,6 +290,15 @@ describe("AC39 'no problems' vs 'nothing to check' vs 'no lock'", () => {
     expect(pickBySeverity(all, ["critical", "high", "medium"], 2)).toEqual({ ids: ["c1", "h1"], total: 4 });
     expect(pickBySeverity([], ["critical"], 10)).toEqual({ ids: [], total: 0 });
   });
+
+  it("quick select: critical and critical+high skip provisional severities; All keeps them", () => {
+    const p = ["severity_provisional"];
+    const all = [{ id: "c1", severity: "critical", notes: p }, { id: "c2", severity: "critical" }, { id: "h1", severity: "high", notes: ["priority_failed", ...p] }, { id: "m1", severity: "medium", notes: p }];
+    expect(pickBySeverity(all, ["critical"], 10)).toEqual({ ids: ["c2"], total: 1 });
+    expect(pickBySeverity(all, ["critical", "high"], 10)).toEqual({ ids: ["c2"], total: 1 });
+    expect(pickBySeverity(all, ["critical", "high", "medium"], 10)).toEqual({ ids: ["c1", "c2", "h1", "m1"], total: 4 });
+    for (const l of ["ko", "en", "zh"] as const) expect(DICTS[l].result.quickProvisional(2)).toContain("2");
+  });
 });
 
 describe("AC46 ko/en without hard-coded text", () => {

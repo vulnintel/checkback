@@ -575,14 +575,11 @@ function toDetail(v: OsvVuln): Detail {
 const SEV: Severity[] = ["critical", "high", "medium"];
 const sevRank = (s: Severity): number => SEV.indexOf(s);
 
-/**
- * Severity: KEV → critical, else the advisory's OSV severity or CVSS. VPI (and the public lookup's
- * CVSS) only badge and sort: a lookup that did not finish in time must not change the severity scale
- * between scans (VPI 2 once read "high" from OSV, then "medium" from VPI on the next scan).
- */
+/** §7-3 severity mapping: KEV → critical, VPI 5–6 critical / 4 high / 1–3 medium, else OSV severity or CVSS. */
 function vulnSeverity(v: Detail): { sev: Severity; known: boolean } {
   if (v.vi?.kev || v.kev) return { sev: "critical", known: true };
-  const cv = v.cvss;
+  if (v.vi?.vpi) return { sev: v.vi.vpi >= 5 ? "critical" : v.vi.vpi === 4 ? "high" : "medium", known: true };
+  const cv = v.cvss ?? v.vi?.cvss ?? undefined;
   if (v.osvSeverity === "CRITICAL" || (cv ?? 0) >= 9) return { sev: "critical", known: true };
   if (v.osvSeverity === "HIGH" || (cv ?? 0) >= 7) return { sev: "high", known: true };
   return { sev: "medium", known: !!v.osvSeverity || cv !== undefined };
@@ -626,15 +623,18 @@ const bySeverity = (a: Detail, b: Detail): number =>
 function vulnFinding(p: VulnPkg, inv: Inventory, lang?: Lang): BF {
   const { t } = p;
   const notes: NoteCode[] = [];
-  // N4: VPI/EPSS badges show once every ID of the package has its priority; the severity never waits for them.
+  // N4: the §7-3 VPI mapping applies once every ID of the package has its priority. Until then the
+  // card keeps the OSV/CVSS severity (only KEV, which makes the final result critical anyway, shows
+  // early), so repeated scans do not reshuffle severities while enrichment is still running.
   const done = !p.pending && !p.failed;
   const kev = p.vulns.some((v) => v.vi?.kev || v.kev);
-  const sevs = p.vulns.map(vulnSeverity);
+  const sevs = p.vulns.map((v) => (done ? vulnSeverity(v) : vulnSeverity({ ...v, vi: undefined, kev: v.kev || v.vi?.kev || undefined })));
   const severity = sevs.map((s) => s.sev).sort((a, b) => sevRank(a) - sevRank(b))[0] ?? "medium";
   if (!sevs.length || sevs.every((s) => !s.known)) notes.push("severity_unknown");
   if (t.dev) notes.push("dev_dependency");
   if (p.pending) notes.push("priority_pending");
   if (p.failed) notes.push("priority_failed");
+  if (!done && !kev) notes.push("severity_provisional"); // OSV/CVSS stand-in until the VPI mapping can apply
   const fix = fixOf(p);
   if (fix && major(fix) !== major(t.version!)) notes.push("major_upgrade");
   if (fix && p.asked?.get(fix) !== true) notes.push("fix_unverified");

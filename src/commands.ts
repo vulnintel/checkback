@@ -603,8 +603,10 @@ export function formatScan(r: ScanResult, tpl: Template, lang: Lang, color: bool
     const where = f.location ? `${f.location.file}${f.location.line ? `:${f.location.line}` : ""}${more}` : "";
     const desc = describe(f, tpl, lang);
     const tag = f.recheck && f.recheck !== "remaining" ? `  [${RECHECK_NAME[lang][f.recheck]}]` : "";
+    const mark = f.notes?.includes("severity_provisional") ? T({ ko: "(잠정)", en: " (provisional)", zh: "（暂定）" }) : "";
+    const gap = " ".repeat(Math.max(0, width - cells(names[f.severity]) - (lang === "ko" ? mark.length + 2 : cells(mark))));
     return [
-      `  ${paint(SEV_STYLE[f.severity], names[f.severity])}${" ".repeat(width - cells(names[f.severity]))}  ${paint("bold", f.title)}${tag}`,
+      `  ${paint(SEV_STYLE[f.severity], names[f.severity])}${mark}${gap}  ${paint("bold", f.title)}${tag}`,
       ...(f.package ? [pad + pkgLine(f, lang)] : []),
       ...(where ? [pad + paint("dim", where)] : []),
       ...(desc ? [pad + desc] : []),

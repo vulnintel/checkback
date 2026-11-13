@@ -9,6 +9,7 @@ import { startGui } from "../src/gui/server.js";
 import { USER_AGENT, VERSION } from "../src/net/http.js";
 import { clearSnapshot, createMcpHandler, loadDefaultTemplate, recordFixRequest } from "../src/index.js";
 import { consentedAppDir, git, gitRepo, K, mockNet, project, scanDefault, tempDir } from "./helpers.js";
+import type { Finding } from "../src/types.js";
 
 const NL = "\n";
 const PKG_VERSION = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version as string;
@@ -204,6 +205,17 @@ describe("formatScan", () => {
     );
     expect(formatScan(r, await loadDefaultTemplate(), "ko", false)).toContain("lodash 4.17.15 → 4.17.21 이상으로 올리기");
     expect(depsUncheckedWarning(r)).toBeNull();
+  });
+
+  it("a provisional severity carries a marker after the severity name", async () => {
+    const r = await scanDefault(depsProject());
+    const f: Finding = { id: "x", rule_id: "vulnerable-deps", severity: "high", confidence: "confirmed", title: "Package with known vulnerabilities", location: null, value_hash: "", source: "osv", notes: ["priority_failed", "severity_provisional"] };
+    const one = { ...r, findings: [f] };
+    const tpl = await loadDefaultTemplate();
+    expect(formatScan(one, tpl, "en", false)).toContain(`  HIGH (provisional)  ${f.title}`);
+    expect(formatScan(one, tpl, "ko", false)).toContain(`  높음(잠정)  ${f.title}`);
+    expect(formatScan(one, tpl, "zh", false)).toContain("（暂定）");
+    expect(formatScan({ ...r, findings: [{ ...f, notes: [] }] }, tpl, "en", false)).not.toContain("provisional");
   });
 
   it("A4: re-check summary, resolved items and tags on changed states only", async () => {

@@ -5,7 +5,7 @@ import { api } from "../api.js";
 import { extLink, h, modal, replace } from "../dom.js";
 import { emptyKind } from "../empty.js";
 import { t } from "../i18n.js";
-import { pickBySeverity } from "../pick.js";
+import { isProvisional, pickBySeverity } from "../pick.js";
 import { go, report, S, type GFinding } from "../state.js";
 import { aiCheckDialog, fixDialog, ignoreDialog, pasteToAi, trackDialog, watchDialog } from "./dialogs.js";
 import { loc, recheckSummary, requestedHead, requestedOf } from "./recheck.js";
@@ -26,7 +26,7 @@ function badges(f: GFinding): HTMLElement {
     f.recheck && !(f.confidence === "info" && f.recheck === "remaining") ? h("span", { class: `badge recheck-${f.recheck}` }, c.recheck[f.recheck] ?? f.recheck) : null,
     f.kev ? h("span", { class: "badge kev" }, c.kev) : null,
     f.vpi_level ? h("span", { class: `badge vpi vpi-${f.vpi_level}` }, c.vpi(f.vpi_level)) : null,
-    f.notes?.some((n) => n === "priority_pending" || n === "priority_failed") ? h("span", { class: "badge" }, c.priorityUnchecked) : null,
+    isProvisional(f) ? h("span", { class: "badge" }, c.provisional) : null,
     typeof f.epss === "number" ? h("span", { class: "badge" }, c.epss(Math.round(f.epss * 1000) / 10)) : null,
     f.external_text ? h("span", { class: "badge ext" }, c.externalText) : null,
   );
@@ -181,9 +181,13 @@ export function resultView(): HTMLElement {
     return [h("button", { class: "btn", type: "button", onclick: () => setSelection(p.ids, p.total) }, `${label} ${p.total}`)];
   });
   const capNote = h("span", { class: "muted small", "aria-live": "polite" });
+  const skipped = pickable.filter((f) => (f.severity === "critical" || f.severity === "high") && isProvisional(f)).length;
   const quick =
     pickable.length > 1
-      ? h("div", { class: "quick" }, h("span", { class: "muted small" }, tr.quick), quickBtns, h("button", { class: "btn", type: "button", onclick: () => setSelection([], 0) }, tr.quickClear), capNote)
+      ? [
+          h("div", { class: "quick" }, h("span", { class: "muted small" }, tr.quick), quickBtns, h("button", { class: "btn", type: "button", onclick: () => setSelection([], 0) }, tr.quickClear), capNote),
+          skipped ? h("p", { class: "muted small" }, tr.quickProvisional(skipped)) : null,
+        ].filter((x) => x !== null)
       : null;
 
   if (S.st!.key !== "none" && S.tracked === null && r.findings.some((f) => f.rule_id === "vulnerable-deps" && cves(f).length)) {
@@ -230,7 +234,7 @@ export function resultView(): HTMLElement {
 
   const empty = emptyState();
   if (empty) root.append(empty);
-  if (quick) root.append(quick);
+  if (quick) root.append(...quick);
   if (r.compare?.baseline === "fix_request" && r.compare.requested.length) {
     root.append(...requestedHead(asked.length), h("div", { class: "cards" }, asked.map((f) => card(f, rerender))));
     if (rest.length) root.append(h("h2", { class: "sec others" }, t().recheck.others));

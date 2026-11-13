@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-11-13
+
+### Changed
+
+- A vulnerable dependency's severity follows the VulnIntel priority (VPI) again, as before 0.2.1
+  (KEV → critical, VPI 5–6 critical, 4 high, 1–3 medium). While a package's priority lookup has not
+  finished or failed, it keeps its OSV/CVSS severity marked provisional (web page, `scan --text`, MCP
+  `notes`), and the critical and critical+high quick select leave it out.
+
 ## [0.2.1] - 2026-11-13
 
 ### Fixed
