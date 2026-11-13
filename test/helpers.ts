@@ -74,6 +74,8 @@ export interface NpmMock {
   versions?: Record<string, { hasInstallScript?: boolean }>;
   created?: string;
   weekly?: number;
+  /** Full document `time` entries (version → publish time). */
+  time?: Record<string, string>;
 }
 
 export interface NetMock {
@@ -82,6 +84,8 @@ export interface NetMock {
   vulns?: Record<string, unknown>;
   npm?: Record<string, NpmMock>;
   pypi?: Record<string, boolean>;
+  /** PyPI name → version → first upload time (`releases` in the project JSON). */
+  pypiReleases?: Record<string, Record<string, string>>;
   /** id → response data, or an HTTP status */
   vi?: Record<string, Record<string, unknown> | number>;
   /** Statuses returned by successive querybatch calls before normal answers. */
@@ -135,7 +139,7 @@ export function mockNet(m: NetMock): { fetch: typeof fetch; calls: Call[] } {
         name,
         "dist-tags": { latest: p.latest ?? "1.0.0" },
         versions: p.versions ?? { [p.latest ?? "1.0.0"]: {} },
-        ...(!(init?.headers as Record<string, string>)?.Accept?.includes("install-v1") && { time: { created: p.created ?? "2015-01-01T00:00:00Z" } }),
+        ...(!(init?.headers as Record<string, string>)?.Accept?.includes("install-v1") && { time: { created: p.created ?? "2015-01-01T00:00:00Z", ...p.time } }),
       });
     }
     if (u.host === "api.npmjs.org") {
@@ -144,7 +148,9 @@ export function mockNet(m: NetMock): { fetch: typeof fetch; calls: Call[] } {
     }
     if (u.host === "pypi.org") {
       const name = decodeURIComponent(u.pathname.split("/")[2]!);
-      return m.pypi?.[name] === false ? json({ message: "nf" }, 404) : json({ info: { name } });
+      const rel = m.pypiReleases?.[name];
+      if (m.pypi?.[name] === false) return json({ message: "nf" }, 404);
+      return json({ info: { name }, ...(rel && { releases: Object.fromEntries(Object.entries(rel).map(([v, t]) => [v, [{ upload_time_iso_8601: t }]])) }) });
     }
     if (u.host === "api.vulnintelapp.com") {
       const id = decodeURIComponent(u.pathname.split("/vulnerabilities/")[1] ?? "");

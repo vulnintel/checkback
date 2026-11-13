@@ -26,6 +26,7 @@ export type NoteCode =
   | "severity_unknown" // no KEV/VPI/OSV severity/CVSS
   | "priority_pending" // VulnIntel priority lookup not done yet (budget) — next scan continues from cache
   | "priority_failed" // VulnIntel lookup failed — sorted by OSV severity
+  | "released_after_advisory" // no fixed version, but the installed version came out after the advisory — may not apply
   | "expired"; // firebase test mode already expired
 
 export interface Location {

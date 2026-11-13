@@ -144,6 +144,18 @@ export function isVendorPath(rel: string): boolean {
   return /(^|\/)(vendor|vendors|third[-_]party)\//.test(rel) || /\.(min|standalone|bundle|umd)\.[cm]?js$/.test(base(rel));
 }
 
+/**
+ * AI coding-assistant instructions and settings (agent prompts, rules files): prose and examples
+ * about code (`never use allow_origins=["*"]`), not code or config that runs.
+ */
+export function isAiAssistantFile(rel: string): boolean {
+  return (
+    /(^|\/)\.(claude|codex|cursor|windsurf)\//.test(rel) ||
+    /(^|\/)\.github\/(copilot-instructions\.md$|instructions\/|prompts\/)/.test(rel) ||
+    /^(AGENTS|CLAUDE|GEMINI)(\.local)?\.md$|^\.(cursorrules|windsurfrules|clinerules)$|\.mdc$/i.test(base(rel))
+  );
+}
+
 /** A real (non-example) dotenv file. */
 export function isEnvFile(rel: string): boolean {
   return /^\.env(\.|$)/.test(base(rel)) && !isExampleOrDoc(rel);

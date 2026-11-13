@@ -20,6 +20,7 @@ const RULE_CASES: Record<string, Case[]> = {
     { name: "project key in code", files: () => ({ "src/ai.ts": `const k = "${K.openai()}";` }), expect: [c("critical", "confirmed")] },
     { name: "placeholder", files: () => ({ "src/ai.ts": 'const k = "sk-proj-your-key-goes-here-0000000000000000000000";' }), expect: [] },
     { name: "short sk- word", files: () => ({ "src/a.ts": "const cls = 'sk-button';" }), expect: [] },
+    { name: "key pasted into an AI-assistant file still leaks", files: () => ({ ".codex/agents/a.toml": `key = "${K.openai()}"` }), expect: [c("critical", "confirmed")] },
   ],
   "secret-anthropic": [
     { name: "api key", files: () => ({ "server.py": `KEY = "${K.anthropic()}"` }), expect: [c("critical", "confirmed")] },
@@ -137,6 +138,16 @@ const RULE_CASES: Record<string, Case[]> = {
     },
     { name: "fixed origin", files: () => ({ "server.js": "app.use(cors({ origin: 'https://a.com' }));" }), expect: [] },
     { name: "comment line", files: () => ({ "main.py": '# never use allow_origins=["*"] here' }), expect: [] },
+    {
+      name: "AI-assistant instructions name the setting in prose",
+      files: () => ({
+        ".codex/agents/backend-developer.toml": 'developer_instructions = """\n- [ ] CORS `allow_origins=["*"]` 운영 금지\n"""\n',
+        ".claude/settings.json": '{ "note": "Access-Control-Allow-Origin: * is forbidden" }',
+        ".cursor/rules/api.mdc": "Never write app.use(cors());",
+        "AGENTS.md": 'Do not set allow_origins=["*"].',
+      }),
+      expect: [],
+    },
   ],
   "cors-credentials-any": [
     { name: "origin true + credentials", files: () => ({ "server.js": "app.use(cors({ origin: true, credentials: true }));" }), expect: [c("high", "confirmed")] },

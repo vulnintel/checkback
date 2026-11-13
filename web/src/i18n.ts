@@ -118,6 +118,7 @@ const ko = {
     kev: "KEV 악용 확인",
     epss: (p: number) => `EPSS ${p}%`,
     vpi: (n: number) => `L${n} ${(["", "낮음", "모니터링", "계획", "우선", "긴급", "즉시 조치"] as const)[n] ?? ""}`,
+    priorityUnchecked: "우선순위 확인 못 함",
     conf: { confirmed: "확정", review: "확인 필요", info: "참고" } as Record<string, string>,
     recheck: {
       resolved: "해결됨",
@@ -169,6 +170,7 @@ const ko = {
       priority_pending: "우선순위 확인 중 — 다음 검사에서 이어서 확인합니다.",
       fix_unverified: "권장 버전이 안전한지 아직 확인하지 못했습니다 — 올리기 전에 다시 검사하세요.",
       priority_failed: "우선순위 확인 못 함 — OSV 심각도로 정렬했습니다.",
+      released_after_advisory: "설치된 버전이 취약점 공지보다 나중에 나왔습니다 — 공지가 이 버전에 해당하지 않을 수 있으니 확인하세요.",
       expired: "테스트 모드 기간이 이미 지났습니다.",
     } as Record<string, string>,
     recheckNote: {
@@ -463,6 +465,7 @@ const en: Dict = {
     kev: "KEV: exploited",
     epss: (p: number) => `EPSS ${p}%`,
     vpi: (n: number) => `L${n} ${(["", "Low", "Monitor", "Planned", "Priority", "Urgent", "Immediate"] as const)[n] ?? ""}`,
+    priorityUnchecked: "Priority not checked",
     conf: { confirmed: "Confirmed", review: "Review", info: "Info" },
     recheck: {
       resolved: "Resolved",
@@ -514,6 +517,7 @@ const en: Dict = {
       priority_pending: "Checking priority — the next scan continues.",
       fix_unverified: "This fixed version has not been checked yet — scan again before upgrading.",
       priority_failed: "Priority lookup failed — sorted by OSV severity.",
+      released_after_advisory: "The installed version came out after the advisory was published — the advisory may not apply to it, so check.",
       expired: "The test-mode period has already expired.",
     },
     recheckNote: {
@@ -806,6 +810,7 @@ const zh: Dict = {
     kev: "KEV：实际被利用",
     epss: (p: number) => `EPSS ${p}%`,
     vpi: (n: number) => `L${n} ${(["", "较低", "监控", "计划", "优先", "紧急", "立即处置"] as const)[n] ?? ""}`,
+    priorityUnchecked: "未获取优先级",
     conf: { confirmed: "已确认", review: "待确认", info: "参考" },
     recheck: {
       resolved: "已解决",
@@ -857,6 +862,7 @@ const zh: Dict = {
       priority_pending: "正在查询优先级 — 下次扫描会继续。",
       fix_unverified: "该修复版本尚未核实 — 升级前请重新扫描。",
       priority_failed: "优先级查询失败 — 按 OSV 严重程度排序。",
+      released_after_advisory: "已安装的版本晚于漏洞公告发布 — 公告可能不适用于此版本，请确认。",
       expired: "测试模式期限已过。",
     },
     recheckNote: {

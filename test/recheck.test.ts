@@ -204,6 +204,28 @@ describe("AC67 recheck against the fix-request snapshot", () => {
     expect((await rescan(dir, appDir, { fetch: net.fetch })).compare!.counts).toMatchObject({ resolved: 1, lock_mismatch: 0 });
   });
 
+  it("a rule the previous scan did not run (no consent yet) → its items are not 'new'; other rules still are", async () => {
+    const appDir = tempDir();
+    const net = mockNet({
+      osv: { "npm:lodash@4.17.20": ["GHSA-35jh-r3h4-6jhm"] },
+      vulns: { "GHSA-35jh-r3h4-6jhm": { id: "GHSA-35jh-r3h4-6jhm", database_specific: { severity: "HIGH" }, affected: [{ package: { ecosystem: "npm", name: "lodash" }, ranges: [{ events: [{ introduced: "0" }, { fixed: "4.17.21" }] }] }] } },
+    });
+    const dir = project({
+      "package.json": JSON.stringify({ name: "a", dependencies: { lodash: "^4.17.20" } }),
+      "package-lock.json": JSON.stringify({ name: "a", lockfileVersion: 3, packages: { "": { name: "a", dependencies: { lodash: "^4.17.20" } }, "node_modules/lodash": { version: "4.17.20" } } }),
+    });
+    const first = await rescan(dir, appDir);
+    expect(first.checked.find((c) => c.rule_id === "vulnerable-deps")).toMatchObject({ ran: false, reason: "no_consent" });
+    const { updateConfig } = await import("../src/appdata.js");
+    await updateConfig(appDir, { consent: { at: "2026-11-04T00:00:00Z", version: 1 }, external: { vulnintel: false, registry: false } });
+    project({ "src/c.ts": `const c = "${K.github()}";\n` }, dir);
+    const r = await rescan(dir, appDir, { fetch: net.fetch });
+    expect(byRule(r, "vulnerable-deps")).toMatchObject([{ package: "lodash" }]);
+    expect(byRule(r, "vulnerable-deps")[0]!.recheck).toBeUndefined();
+    expect(status(r, "secret-github")).toEqual([["new", "src/c.ts", "confirmed"]]);
+    expect(r.compare).toMatchObject({ baseline: "previous", counts: { new: 1, resolved: 0 } });
+  });
+
   it("1c E1: manifest-only bump (lock untouched) → 'remaining', not 'lock mismatch'; judged per package", async () => {
     const appDir = await consentedAppDir({ vulnintel: false, registry: false });
     const net = mockNet({

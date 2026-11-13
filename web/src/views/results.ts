@@ -26,6 +26,7 @@ function badges(f: GFinding): HTMLElement {
     f.recheck && !(f.confidence === "info" && f.recheck === "remaining") ? h("span", { class: `badge recheck-${f.recheck}` }, c.recheck[f.recheck] ?? f.recheck) : null,
     f.kev ? h("span", { class: "badge kev" }, c.kev) : null,
     f.vpi_level ? h("span", { class: `badge vpi vpi-${f.vpi_level}` }, c.vpi(f.vpi_level)) : null,
+    f.notes?.some((n) => n === "priority_pending" || n === "priority_failed") ? h("span", { class: "badge" }, c.priorityUnchecked) : null,
     typeof f.epss === "number" ? h("span", { class: "badge" }, c.epss(Math.round(f.epss * 1000) / 10)) : null,
     f.external_text ? h("span", { class: "badge ext" }, c.externalText) : null,
   );

@@ -308,10 +308,10 @@ describe("vulnerable-deps (§7-3)", () => {
     const net = mockNet({ ...osvMock, vi: { "CVE-2021-23337": { vpi_level: 5, is_kev: true, epss_score: 0.4 }, "CVE-2021-44906": { vpi_level: 3, is_kev: false } } });
     const r = await scanDefault(vulnProject(), { appDir: await consentedAppDir(), fetch: net.fetch, now, lang: "ko" });
     const v = byRule(r, "vulnerable-deps");
-    // VPI wins over CVSS once present: minimist CVSS 9.8 but VPI 3 → medium (§7-3 mapping).
+    // KEV → critical; otherwise the advisory's severity: minimist CVSS 9.8 stays critical, VPI 3 is a badge only.
     expect(v.map((f) => [f.package, f.severity, f.kev, f.vpi_level, f.fixed_version])).toEqual([
       ["lodash", "critical", true, 5, "4.17.21"],
-      ["minimist", "medium", false, 3, "1.2.6"],
+      ["minimist", "critical", false, 3, "1.2.6"],
     ]);
     expect(r.findings[0]!.package).toBe("lodash");
     const vi = net.calls.filter((c) => c.url.includes("vulnintelapp")).map((c) => c.url);
@@ -381,22 +381,59 @@ describe("vulnerable-deps (§7-3)", () => {
     expect(net.calls.filter((c) => c.url.includes("vulnintelapp"))).toHaveLength(1); // stopped after 429
   });
 
-  it("N4: a package whose priority is not complete keeps its OSV/CVSS severity (no partial VPI mix); ko→en reuses the cache", async () => {
+  it("N4: the same advisory has the same severity whether or not its priority lookup finished; ko→en reuses the cache", async () => {
     const appDir = await consentedAppDir();
     let net = mockNet({ ...osvMock, vi: { "CVE-2021-23337": { vpi_level: 5, is_kev: false }, "CVE-2021-44906": 500 } });
     let r = await scanDefault(vulnProject(), { appDir, fetch: net.fetch, now, lang: "ko" });
-    // minimist: lookup failed → CVSS 9.8 critical, no VPI badge (complete it would be VPI-mapped, AC25).
+    // lodash: OSV HIGH stays high with VPI 5; minimist: lookup failed → CVSS 9.8 critical, no VPI badge.
     expect(byRule(r, "vulnerable-deps").map((f) => [f.package, f.severity, f.vpi_level, f.notes?.includes("priority_failed") ?? false])).toEqual([
-      ["lodash", "critical", 5, false],
       ["minimist", "critical", undefined, true],
+      ["lodash", "high", 5, false],
     ]);
     net = mockNet({ ...osvMock, vi: { "CVE-2021-44906": { vpi_level: 3, is_kev: false } } });
     r = await scanDefault(vulnProject(), { appDir, fetch: net.fetch, now, lang: "en" });
     expect(net.calls.filter((c) => c.url.includes("vulnintelapp")).map((c) => c.url)).toEqual(["https://api.vulnintelapp.com/api/v1/vulnerabilities/CVE-2021-44906?lang=en"]);
     expect(byRule(r, "vulnerable-deps").map((f) => [f.package, f.severity, f.vpi_level])).toEqual([
-      ["lodash", "critical", 5],
-      ["minimist", "medium", 3],
+      ["minimist", "critical", 3],
+      ["lodash", "high", 5],
     ]);
+  });
+
+  it("no fixed version, installed version released after the advisory (open-ended range) → review with a note", async () => {
+    // PYSEC-2022-252: one hijacked release (1.8.5), range `introduced` only, so every later version matches.
+    const vulns = {
+      "PYSEC-2022-252": {
+        id: "PYSEC-2022-252", published: "2022-06-21T00:00:00Z", database_specific: { severity: "CRITICAL" },
+        affected: [{ package: { ecosystem: "PyPI", name: "deep-translator" }, ranges: [{ type: "ECOSYSTEM", events: [{ introduced: "1.8.5" }] }] }],
+      },
+    };
+    const osv = { "PyPI:deep-translator@1.11.4": ["PYSEC-2022-252"] };
+    const dir = (): string => project({ "requirements.txt": "deep-translator==1.11.4\n" });
+    let net = mockNet({ osv, vulns, pypiReleases: { "deep-translator": { "1.11.4": "2023-06-04T12:00:00Z" } } });
+    let f = byRule(await scanDefault(dir(), { appDir: await consentedAppDir({ vulnintel: false }), fetch: net.fetch, now }), "vulnerable-deps");
+    expect(f).toMatchObject([{ kind: "vulnerable_no_fix", severity: "critical", confidence: "review" }]);
+    expect(f[0]!.notes).toContain("released_after_advisory");
+    // Released before the advisory, or the date cannot be read → stays confirmed.
+    net = mockNet({ osv, vulns, pypiReleases: { "deep-translator": { "1.11.4": "2022-01-01T00:00:00Z" } } });
+    f = byRule(await scanDefault(dir(), { appDir: await consentedAppDir({ vulnintel: false }), fetch: net.fetch, now }), "vulnerable-deps");
+    expect(f).toMatchObject([{ kind: "vulnerable_no_fix", confidence: "confirmed" }]);
+    net = mockNet({ osv, vulns, pypi: { "deep-translator": false } });
+    f = byRule(await scanDefault(dir(), { appDir: await consentedAppDir({ vulnintel: false }), fetch: net.fetch, now }), "vulnerable-deps");
+    expect(f).toMatchObject([{ kind: "vulnerable_no_fix", confidence: "confirmed" }]);
+    // Registry lookups off → no extra request, today's behaviour.
+    net = mockNet({ osv, vulns, pypiReleases: { "deep-translator": { "1.11.4": "2023-06-04T12:00:00Z" } } });
+    f = byRule(await scanDefault(dir(), { appDir: await consentedAppDir({ vulnintel: false, registry: false }), fetch: net.fetch, now }), "vulnerable-deps");
+    expect(f).toMatchObject([{ kind: "vulnerable_no_fix", confidence: "confirmed" }]);
+    expect(net.calls.some((c) => c.url.includes("pypi.org"))).toBe(false);
+  });
+
+  it("npm: the release time comes from the full document's `time[version]`", async () => {
+    const vulns = { "GHSA-open": { id: "GHSA-open", published: "2022-01-01T00:00:00Z", affected: [{ package: { ecosystem: "npm", name: "left" }, ranges: [{ type: "SEMVER", events: [{ introduced: "1.0.0" }] }] }] } };
+    const net = mockNet({ osv: { "npm:left@2.0.0": ["GHSA-open"] }, vulns, npm: { left: { latest: "2.0.0", time: { "2.0.0": "2024-01-01T00:00:00Z" } } } });
+    const dir = project({ "package.json": pj({ name: "a", dependencies: { left: "2.0.0" } }), "package-lock.json": lock({ left: "2.0.0" }) });
+    const f = byRule(await scanDefault(dir, { appDir: await consentedAppDir({ vulnintel: false }), fetch: net.fetch, now }), "vulnerable-deps");
+    expect(f).toMatchObject([{ kind: "vulnerable_no_fix", confidence: "review" }]);
+    expect(f[0]!.notes).toContain("released_after_advisory");
   });
 
   it("caches: a second scan within 24h makes no VulnIntel/registry calls and no OSV detail calls", async () => {

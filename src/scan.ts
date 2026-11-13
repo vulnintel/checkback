@@ -13,7 +13,7 @@ import { ViBudget } from "./net/budget.js";
 import { Cache, defaultHttp, VERSION, type Fetch } from "./net/http.js";
 import { configValue, parseConfig, parseDotenv } from "./config-file.js";
 import {
-  collectFiles, decode, isEnvFile, MAX_FILE_BYTES, isExampleOrDoc, isSkippedPath, isTestPath, isVendorPath, lineAt, lineTextAt, readText, type FileEntry,
+  collectFiles, decode, isAiAssistantFile, isEnvFile, MAX_FILE_BYTES, isExampleOrDoc, isSkippedPath, isTestPath, isVendorPath, lineAt, lineTextAt, readText, type FileEntry,
 } from "./files.js";
 import { gitInfo, globToPathspecs, type GitInfo } from "./git.js";
 import { matchAny, matchGlob } from "./glob.js";
@@ -333,6 +333,8 @@ class Run {
     if (isLate && occupied.has(line)) return;
     // Settings mentioned in comments are not in effect; secrets in comments still leak.
     if (!secret && /^\s*(#|\/\/|\/\*|\*|<!--|;|!)/.test(lineTextAt(text, m.index))) return;
+    // Same for settings named in AI-assistant instructions (agent prompts, rules files); a key pasted there still leaks.
+    if (!secret && isAiAssistantFile(f.rel)) return;
     let value = m.value;
     let severity = rule.severity;
     let confidence: Confidence = m.review ? "review" : "confirmed";

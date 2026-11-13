@@ -55,3 +55,17 @@ export async function npmWeeklyDownloads(http: Http, name: string): Promise<numb
 
 export const pypiExists = async (http: Http, name: string): Promise<Exists> =>
   (await get(http, `https://pypi.org/pypi/${encodeURIComponent(name)}/json`)).s;
+
+/**
+ * When `version` was published (npm `time[version]`, PyPI first upload), from the same name-only
+ * documents as the checks above; null when unknown.
+ */
+export async function releasedAt(http: Http, eco: "npm" | "PyPI", name: string, version: string): Promise<string | null> {
+  if (eco === "npm") {
+    if (!NPM_NAME.test(name)) return null;
+    const r = await get<{ time?: Record<string, string> }>(http, `https://registry.npmjs.org/${npmPath(name)}`);
+    return r.body?.time?.[version] ?? null;
+  }
+  const r = await get<{ releases?: Record<string, { upload_time_iso_8601?: string }[]> }>(http, `https://pypi.org/pypi/${encodeURIComponent(name)}/json`);
+  return (r.body?.releases?.[version] ?? []).flatMap((f) => f.upload_time_iso_8601 ?? []).sort()[0] ?? null;
+}

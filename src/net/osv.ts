@@ -90,6 +90,7 @@ export async function osvQueryBatch(http: Http, queries: OsvQuery[]): Promise<Os
 export interface OsvVuln {
   id: string;
   modified?: string;
+  published?: string;
   summary?: string;
   aliases?: string[];
   severity?: { type: string; score: string }[];

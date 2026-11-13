@@ -312,8 +312,14 @@ export function compareWith(
       ...(secretish(b) && { confirm_revocation: true as const }),
     });
   }
+  // A rule the baseline did not fully run (no consent, offline, timed out, disabled, not in it yet) found
+  // nothing there to compare with: its items get no status instead of "new". A shallow clone still checked the files.
+  const baseRan = (ruleId: string): boolean => {
+    const c = base.checked.find((x) => x.rule_id === ruleId);
+    return !!c && c.ran && (!c.reason || c.reason === "shallow_clone");
+  };
   for (const f of cur) {
-    if (used.has(f.id) || baseIds.has(f.id)) continue;
+    if (used.has(f.id) || baseIds.has(f.id) || !baseRan(f.rule_id)) continue;
     mark(f, "new", unverifiable(f));
   }
   return {

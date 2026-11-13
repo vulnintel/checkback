@@ -6,6 +6,21 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Code and config rules (CORS, debug settings and the like) no longer fire in AI-assistant
+  instruction files (`.claude/`, `.codex/`, `.cursor/`, `.windsurf/`, `.github/copilot-instructions.md`,
+  `AGENTS.md`, `CLAUDE.md`, `*.mdc`, …), which name those settings in prose. Secret-key rules still do.
+- A vulnerable dependency with no fixed version whose installed version was released after every
+  advisory was published is now "needs review" with a note: an open-ended advisory range (for example
+  one hijacked release) may not cover it. The release time comes from npm / PyPI, only for these items.
+- A vulnerable dependency's severity no longer depends on whether the VulnIntel priority lookup
+  finished: it comes from KEV, else the advisory's OSV severity or CVSS. VPI is a badge and a sort key,
+  and a card whose priority was not checked says so.
+- A re-check no longer counts items as "new" when the previous scan did not run their rule (no
+  consent yet, offline, timed out, disabled); they get no re-check status. Same in the web page,
+  `scan --text` and MCP `compare`.
+
 ## [0.2.0] - 2026-11-13
 
 ### Added

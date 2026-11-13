@@ -42,8 +42,9 @@ The page and the terminal reports are available in English, 한국어 and 简体
 A scan waits at most 90 seconds for external lookups, then shows what it has and says what is still
 pending; the next scan continues from the cache. The public priority lookup (KEV, VPI, EPSS) runs
 at about 50 vulnerabilities a minute, so a project with a few hundred known vulnerabilities needs 3
-or 4 scans before every priority badge is filled in. Until then those packages keep their OSV/CVSS
-severity.
+or 4 scans before every priority badge is filled in. Severity always comes from OSV/CVSS (KEV
+makes it critical); VPI and EPSS are badges and sort order, and a card whose lookup has not finished
+says "Priority not checked".
 
 Dependency checks read `package-lock.json`, `pnpm-lock.yaml`, `uv.lock` and `requirements*.txt`.
 A project that has only `bun.lock` (the Lovable default) gets every other check, but its
