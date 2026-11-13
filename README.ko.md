@@ -186,15 +186,15 @@ MCP 클라이언트라면 어디서든 stdio로 같은 엔진을 쓸 수 있습�
   "mcpServers": {
     "checkback": {
       "command": "npx",
-      "args": ["-y", "checkback@0.1.0", "mcp"]
+      "args": ["-y", "checkback@0.2.2", "mcp"]
     }
   }
 }
 ```
 
-플러그인 없이 Claude Code에서 쓰려면 `claude mcp add checkback -- npx -y checkback@0.1.0 mcp`를
+플러그인 없이 Claude Code에서 쓰려면 `claude mcp add checkback -- npx -y checkback@0.2.2 mcp`를
 실행하세요. Windows 네이티브 환경의 일부 클라이언트는 `"command": "cmd"`와
-`"args": ["/c", "npx", "-y", "checkback@0.1.0", "mcp"]`가 필요합니다.
+`"args": ["/c", "npx", "-y", "checkback@0.2.2", "mcp"]`가 필요합니다.
 
 서버는 자신이 시작된 폴더를 검사합니다(Claude Code는 `CLAUDE_PROJECT_DIR`로 프로젝트 폴더를 넘깁니다).
 경로를 받는 도구는 없습니다.
@@ -253,7 +253,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npx -y checkback@0.1.0 scan --text --fail-on high
+      - run: npx -y checkback@0.2.2 scan --text --fail-on high
 ```
 
 CI에서는 의존성 조회 없이 로컬 규칙만 실행합니다. 동의는 사람만 할 수 있고(`checkback consent`는 대화형

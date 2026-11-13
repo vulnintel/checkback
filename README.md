@@ -192,15 +192,15 @@ Any MCP client can use the same engine over stdio. Pin the version:
   "mcpServers": {
     "checkback": {
       "command": "npx",
-      "args": ["-y", "checkback@0.1.0", "mcp"]
+      "args": ["-y", "checkback@0.2.2", "mcp"]
     }
   }
 }
 ```
 
-For Claude Code without the plugin: `claude mcp add checkback -- npx -y checkback@0.1.0 mcp`.
+For Claude Code without the plugin: `claude mcp add checkback -- npx -y checkback@0.2.2 mcp`.
 On native Windows, some clients need `"command": "cmd"` with
-`"args": ["/c", "npx", "-y", "checkback@0.1.0", "mcp"]`.
+`"args": ["/c", "npx", "-y", "checkback@0.2.2", "mcp"]`.
 
 The server scans the folder it is started in (Claude Code passes the project folder in
 `CLAUDE_PROJECT_DIR`). No tool takes a path.
@@ -260,7 +260,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npx -y checkback@0.1.0 scan --text --fail-on high
+      - run: npx -y checkback@0.2.2 scan --text --fail-on high
 ```
 
 CI runs the local rules only, with no dependency lookups: consent can only be given by a person

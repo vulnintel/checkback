@@ -144,13 +144,13 @@ checkback 自带一个 Claude Code 插件。在 Claude Code 中添加 marketplac
   "mcpServers": {
     "checkback": {
       "command": "npx",
-      "args": ["-y", "checkback@0.1.0", "mcp"]
+      "args": ["-y", "checkback@0.2.2", "mcp"]
     }
   }
 }
 ```
 
-不装插件、直接在 Claude Code 中使用：`claude mcp add checkback -- npx -y checkback@0.1.0 mcp`。在原生 Windows 上，部分客户端需要使用 `"command": "cmd"` 和 `"args": ["/c", "npx", "-y", "checkback@0.1.0", "mcp"]`。
+不装插件、直接在 Claude Code 中使用：`claude mcp add checkback -- npx -y checkback@0.2.2 mcp`。在原生 Windows 上，部分客户端需要使用 `"command": "cmd"` 和 `"args": ["/c", "npx", "-y", "checkback@0.2.2", "mcp"]`。
 
 服务器扫描它启动时所在的目录（Claude Code 通过 `CLAUDE_PROJECT_DIR` 传入项目目录）。没有任何工具接受路径参数。
 
@@ -203,7 +203,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npx -y checkback@0.1.0 scan --text --fail-on high
+      - run: npx -y checkback@0.2.2 scan --text --fail-on high
 ```
 
 CI 只运行本地规则，不做依赖查询：同意只能由人给出（`checkback consent` 需要交互式终端，也可以在本地页面上同意），而全新的 CI runner 上没有保存过的同意记录。报告顶部会说明这一点，`--fail-on` 也会在 stderr 输出依赖检查未运行的警告；退出码只反映实际运行了的检查。如果是浅克隆（shallow clone），报告还会注明 git 历史检查被部分跳过。
