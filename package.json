@@ -1,6 +1,6 @@
 {
   "name": "checkback",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Local security check for AI-built apps: leaked keys, open Supabase/Firebase rules, risky packages. AI로 만든 앱의 키 노출·접근 규칙·취약 패키지를 로컬에서 검사. 本地检查 AI 生成应用的密钥泄露、开放的访问规则和有风险的依赖包。",
   "keywords": [
     "security",

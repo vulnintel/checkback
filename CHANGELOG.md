@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-13
+
 ### Fixed
 
 - Code and config rules (CORS, debug settings and the like) no longer fire in AI-assistant
