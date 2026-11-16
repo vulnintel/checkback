@@ -70,6 +70,7 @@ const RULE_CASES: Record<string, Case[]> = {
     { name: "remote host (AC24)", files: () => ({ "src/db.ts": `const u = "postgres://app:${rnd(16)}@db.prod-host.io:5432/app";` }), expect: [c("high", "confirmed")] },
     { name: "localhost default password (AC24)", files: () => ({ "src/db.ts": 'const u = "postgres://postgres:postgres@localhost/db";' }), expect: [c("medium", "review")] },
     { name: "env interpolation", files: () => ({ "src/db.ts": "const u = `postgres://app:${process.env.PW}@db/app`;" }), expect: [] },
+    { name: "localized docs placeholder", files: () => ({ "src/docs.ts": 'const ko = "postgres://사용자:비밀번호@호스트/DB"; const zh = "postgres://用户:密码@主机/数据库"; const ja = "postgres://ユーザー:パスワード@ホスト/db";' }), expect: [] },
   ],
   "secret-vulnintel": [
     { name: "vi_live_", files: () => ({ "ci.yml": `key: ${K.vulnintel()}` }), expect: [c("critical", "confirmed")] },

@@ -5,7 +5,8 @@ export const sha256 = (s: string | Uint8Array): string => createHash("sha256").u
 /** Placeholder values are never secrets (§5): `your-…`, `xxx…`, `<…>`, `[…]`, `changeme`, `example`, `${…}`. */
 const PLACEHOLDER = /your[-_]|x{3,}|<[^>]*>|\[[^\]]*\]|changeme|example|placeholder|dummy|\$\{|\.{3}|\*{3}|•/i;
 // The whole value is the name of the thing it stands for (docs: `postgres://user:pass@host/db`).
-const PLACEHOLDER_WORD = /^(?:pass|passwd|password|pwd|secret|my_?password|db_?password)$/i;
+// Localized docs too: ko 비밀번호/암호/패스워드, zh 密码/密碼/口令, ja パスワード.
+const PLACEHOLDER_WORD = /^(?:pass|passwd|password|pwd|secret|my_?password|db_?password|비밀번호|암호|패스워드|密码|密碼|口令|パスワード)$/i;
 
 export function isPlaceholder(value: string): boolean {
   return value.trim() === "" || PLACEHOLDER.test(value) || PLACEHOLDER_WORD.test(value.trim());
