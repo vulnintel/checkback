@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-11-16
+
+### Fixed
+
+- `secret-db-url` no longer reports docs examples whose password is a localized placeholder word
+  (ko 비밀번호·암호·패스워드, zh 密码·密碼·口令, ja パスワード), e.g. `postgres://사용자:비밀번호@호스트/DB`.
+
 ## [0.2.3] - 2026-11-16
 
 ### Added
