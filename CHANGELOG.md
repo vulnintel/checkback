@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-11-16
+
+### Added
+
+- `mcpName` (`io.github.vulnintel/checkback`) in `package.json`, so the server can be listed in the
+  official MCP Registry.
+
 ## [0.2.2] - 2026-11-13
 
 ### Changed
