@@ -6,12 +6,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-11-17
+
 ### Added
 
 - Dependency checks read `bun.lock` (Bun 1.2+ text lockfile, the Lovable default): vulnerable,
   malicious and non-existent packages, SBOM and lock consistency now cover Bun projects, including
   workspaces. The binary `bun.lockb` is still not read; the notice suggests
-  `bun install --save-text-lockfile`.
+  `bun install --save-text-lockfile`. Fix prompts for these packages use Bun commands: `bun add`
+  (`-d`, `--optional`) for declared packages, `bun why` / `overrides` / `bun install` for transitive ones.
 
 ### Changed
 

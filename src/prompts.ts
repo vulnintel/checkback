@@ -175,7 +175,7 @@ function depFix(f: StoredFinding, v: Record<string, string>, lang: Lang): string
   if (f.rule_id !== "vulnerable-deps" || (f.kind !== "vulnerable" && f.kind !== "vulnerable_no_fix")) return undefined;
   const lock = f.lockfile ?? "";
   if (/(^|\/)requirements[^/]*\.txt$/i.test(lock)) return fill(pick(f.kind === "vulnerable" ? DEP_FIX.requirements : DEP_FIX.requirementsNoFix, lang)!, v);
-  const mgr = /(^|\/)uv\.lock$/.test(lock) ? "uv" : /(^|\/)pnpm-lock\.yaml$/.test(lock) ? "pnpm" : /(^|\/)(package-lock|npm-shrinkwrap)\.json$/.test(lock) ? "npm" : null;
+  const mgr = /(^|\/)uv\.lock$/.test(lock) ? "uv" : /(^|\/)pnpm-lock\.yaml$/.test(lock) ? "pnpm" : /(^|\/)bun\.lock$/.test(lock) ? "bun" : /(^|\/)(package-lock|npm-shrinkwrap)\.json$/.test(lock) ? "npm" : null;
   const d = f.dependency;
   const { package: pkg = "", version = "-", fixed_version: fixed = "-" } = v;
   if (f.kind !== "vulnerable" || !mgr || !d || pkg === S[lang].omitted || fixed === "-" || version === "-") return undefined;
@@ -194,6 +194,9 @@ function depFix(f: StoredFinding, v: Record<string, string>, lang: Lang): string
         sec.startsWith("dependency-groups.") && PY_GROUP.test(name) ? `--group ${name} ` :
         sec.startsWith("project.optional-dependencies.") && PY_GROUP.test(name) ? `--optional ${name} ` : undefined;
       if (flag !== undefined) cmd = `uv add ${flag}"${pkg}>=${fixed}"`;
+    } else if (mgr === "bun") {
+      const flag = d.section === "dependencies" ? "" : d.section === "devDependencies" ? "-d " : d.section === "optionalDependencies" ? "--optional " : undefined;
+      if (flag !== undefined) cmd = `bun add ${flag}${pkg}@${fixed}`;
     } else {
       const flag = d.section === "dependencies" ? "" : d.section === "devDependencies" ? "-D " : d.section === "optionalDependencies" ? "-O " : undefined;
       if (flag !== undefined) cmd = `${mgr === "pnpm" ? "pnpm add" : "npm install"} ${flag}${pkg}@${fixed}`;
@@ -206,8 +209,13 @@ function depFix(f: StoredFinding, v: Record<string, string>, lang: Lang): string
     if (dir(d.manifest) !== dir(lock)) parts.push(fill(t(DEP_FIX.memberDir), m));
   } else if (d.direct) return undefined; // lock says direct, declaring manifest not found
   else if (mgr === "uv") parts.push(fill(t(DEP_FIX.uvTransitive), w));
+  // Bun overrides take plain names only (a `pkg@1` key is ignored, checked with bun 1.3.12): a floor would move every major line.
+  else if (mgr === "bun" && d.other_majors && !bump) return undefined;
   else {
-    const n = mgr === "pnpm" ? { why: `pnpm why ${pkg}`, overrides: "pnpm.overrides", install: "pnpm install" } : { why: `npm ls ${pkg}`, overrides: "overrides", install: "npm install" };
+    const n =
+      mgr === "pnpm" ? { why: `pnpm why ${pkg}`, overrides: "pnpm.overrides", install: "pnpm install" } :
+      mgr === "bun" ? { why: `bun why ${pkg}`, overrides: "overrides", install: "bun install" } :
+      { why: `npm ls ${pkg}`, overrides: "overrides", install: "npm install" };
     parts.push(fill(t(bump ? DEP_FIX.npmTransitiveMajor : DEP_FIX.npmTransitive), { ...w, ...n }));
   }
   if (d.other_majors) parts.push(fill(t(bump ? DEP_FIX.otherMajorsNoFix : DEP_FIX.otherMajors), w));

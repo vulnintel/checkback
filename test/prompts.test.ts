@@ -5,7 +5,7 @@ import { readSnapshot } from "../src/recheck.js";
 import { byRule, consentedAppDir, git, gitRepo, K, mockNet, project, scanDefault, tempDir } from "./helpers.js";
 
 const NOW = Date.UTC(2026, 10, 4);
-const INSTALL = /npm (i|install|add)\b|pnpm (add|install) \S|yarn add|pip install|설치하세요|install (the|a|new|it)\b|추가하세요.*패키지|use (the )?package \S+ instead/i;
+const INSTALL = /npm (i|install|add)\b|pnpm (add|install) \S|bun (add|install) \S|yarn add|pip install|설치하세요|install (the|a|new|it)\b|추가하세요.*패키지|use (the )?package \S+ instead/i;
 /**
  * The prompts' own prohibition ("do not install new packages"), a version bump of a package the
  * fixture's package.json already declares, and a bare reinstall that regenerates the lock are not
@@ -297,6 +297,48 @@ snapshots:
     expect(qs).toContain('`"qs": "^6.2.4"` under `overrides`');
     expect(qs).toContain("`npm install` to regenerate the lock file");
     expect(qs).not.toMatch(/another major version/);
+  });
+
+  it("bun: direct → bun add (-d dev, --optional); transitive single major → bun why + overrides + bun install; several majors → generic text", async () => {
+    const pj = { name: "a", dependencies: { express: "4.0.0", minimatch: "3.0.4" }, devDependencies: { jest: "29.0.0", vitest: "1.0.0" }, optionalDependencies: { "left-pad": "1.3.0" } };
+    const BUN = `{
+  "lockfileVersion": 1,
+  "workspaces": { "": { "name": "a", "dependencies": { "express": "4.0.0", "minimatch": "3.0.4", }, "devDependencies": { "jest": "29.0.0", "vitest": "1.0.0", }, "optionalDependencies": { "left-pad": "1.3.0", }, }, },
+  "packages": {
+    "brace-expansion": ["brace-expansion@1.1.11", "", {}, "sha512-b1"],
+    "express": ["express@4.0.0", "", { "dependencies": { "qs": "^6" } }, "sha512-e"],
+    "jest": ["jest@29.0.0", "", {}, "sha512-j"],
+    "left-pad": ["left-pad@1.3.0", "", {}, "sha512-l"],
+    "minimatch": ["minimatch@3.0.4", "", { "dependencies": { "brace-expansion": "^1.1.7" } }, "sha512-m"],
+    "qs": ["qs@6.2.0", "", {}, "sha512-q"],
+    "vitest": ["vitest@1.0.0", "", { "dependencies": { "brace-expansion": "^5" } }, "sha512-v"],
+    "vitest/brace-expansion": ["brace-expansion@5.0.2", "", {}, "sha512-b5"],
+  }
+}`;
+    const p = await prompts(
+      { "package.json": JSON.stringify(pj), "bun.lock": BUN },
+      net("npm", { "express@4.0.0": "GHSA-express", "jest@29.0.0": "GHSA-jest", "left-pad@1.3.0": "GHSA-left-pad", "qs@6.2.0": "GHSA-qs", "brace-expansion@1.1.11": "GHSA-brace-expansion" }, [
+        adv("npm", "express", [["0", "4.0.1"]]),
+        adv("npm", "jest", [["0", "29.0.1"]]),
+        adv("npm", "left-pad", [["0", "1.3.1"]]),
+        adv("npm", "qs", [["0", "6.2.4"]]),
+        adv("npm", "brace-expansion", [["0", "1.1.12"]]),
+      ]),
+      "en",
+    );
+    expect(p.get("express@4.0.0")).toContain("package.json declares it directly in dependencies. Raise it with `bun add express@4.0.1`");
+    expect(p.get("jest@29.0.0")).toContain("`bun add -d jest@29.0.1`");
+    expect(p.get("left-pad@1.3.0")).toContain("`bun add --optional left-pad@1.3.1`");
+    const qs = p.get("qs@6.2.0")!;
+    expect(qs).toContain("`bun why qs`");
+    expect(qs).toContain('`"qs": "^6.2.4"` under `overrides`');
+    expect(qs).toContain("`bun install` to regenerate the lock file");
+    expect(qs).not.toMatch(/npm|pnpm/);
+    // Bun ignores `brace-expansion@1` override keys: no override sentence, the kind's generic text instead.
+    const be = p.get("brace-expansion@1.1.11")!;
+    expect(be).toContain("Upgrade with your package manager so it regenerates the lock file.");
+    expect(be).not.toMatch(/overrides|bun why/);
+    for (const t of p.values()) expect(t).toContain("Do not edit the lock file by hand");
   });
 
   it("requirements file: change the version in that file — no 'regenerate the lock'", async () => {
