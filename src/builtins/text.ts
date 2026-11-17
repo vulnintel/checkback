@@ -493,9 +493,9 @@ export const KIND_TEXT: Record<string, KindText> = {
       zh: "暂时无法读取这种 lock 格式，因此未检查安装版本和漏洞。计划在下一个版本中支持。",
     },
     fix: {
-      ko: "다음 릴리스를 기다리거나 지원 형식(npm·pnpm·uv·requirements)으로 다시 검사하세요.",
-      en: "Wait for the next release or check with a supported format (npm, pnpm, uv, requirements).",
-      zh: "请等待下一个版本，或改用支持的格式（npm、pnpm、uv、requirements）重新检查。",
+      ko: "다음 릴리스를 기다리거나 지원 형식(npm·pnpm·bun.lock·uv·requirements)으로 다시 검사하세요. bun.lockb는 `bun install --save-text-lockfile`로 텍스트 lock(bun.lock)을 만들면 검사됩니다.",
+      en: "Wait for the next release or check with a supported format (npm, pnpm, bun.lock, uv, requirements). For bun.lockb, run `bun install --save-text-lockfile` to write a text bun.lock that can be checked.",
+      zh: "请等待下一个版本，或改用支持的格式（npm、pnpm、bun.lock、uv、requirements）重新检查。如果是 bun.lockb，请运行 `bun install --save-text-lockfile` 生成可检查的文本 lock 文件（bun.lock）。",
     },
   },
 };

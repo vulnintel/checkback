@@ -514,9 +514,20 @@ describe("vulnerable-deps (§7-3)", () => {
     expect(safeFix([{ fixed: { [k]: ["1.0.9", "2.0.1"] } }, { fixed: { [k]: ["1.2.0"] } }], k, "1.0.1")).toBe("1.2.0"); // VulnIntel results carry no ranges
   });
 
-  it("1c E4: package-lock.json next to bun.lock → parsed, no extra 'version unknown'", async () => {
-    const r = await scanDefault(project({ "package.json": pj({ name: "a", dependencies: { x: "1.0.0" } }), "package-lock.json": lock({ x: "1.0.0" }), "bun.lock": "{}" }));
+  it("1c E4: package-lock.json next to an unsupported bun.lockb → parsed, no extra 'version unknown'", async () => {
+    const r = await scanDefault(project({ "package.json": pj({ name: "a", dependencies: { x: "1.0.0" } }), "package-lock.json": lock({ x: "1.0.0" }), "bun.lockb": "" }));
     expect(kinds(byRule(r, "vulnerable-deps"))).toEqual([["unsupported_lock", "medium", "info"]]);
+  });
+
+  it("bun.lock next to package-lock.json: both parsed, the same package version is one finding naming both", async () => {
+    const bun = `{\n  "lockfileVersion": 1,\n  "workspaces": { "": { "name": "a", "dependencies": { "x": "1.0.0", }, }, },\n  "packages": {\n    "x": ["x@1.0.0", "", {}, "sha512-x"],\n  }\n}\n`;
+    const dir = project({ "package.json": pj({ name: "a", dependencies: { x: "1.0.0" } }), "package-lock.json": lock({ x: "1.0.0" }), "bun.lock": bun });
+    expect(kinds(byRule(await scanDefault(dir), "vulnerable-deps"))).toEqual([]);
+    const v = { id: "GHSA-xxxx-0001", affected: [{ package: { ecosystem: "npm", name: "x" }, ranges: [{ type: "ECOSYSTEM", events: [{ introduced: "0" }, { fixed: "1.0.1" }] }] }] };
+    const net = mockNet({ osv: { "npm:x@1.0.0": [v.id] }, vulns: { [v.id]: v }, npm: { x: {} } });
+    const f = byRule(await scanDefault(dir, { appDir: await consentedAppDir({ vulnintel: false }), fetch: net.fetch, now }), "vulnerable-deps");
+    expect(f).toMatchObject([{ kind: "vulnerable", fixed_version: "1.0.1", location: { file: "bun.lock" } }]);
+    expect(f[0]!.related).toEqual(["bun.lock", "package-lock.json"]);
   });
 
   it("B8: only an unsupported lock → one 'not supported yet' review item, never 'no lock file'; per ecosystem; unpinned requirements → 'not pinned'", async () => {

@@ -210,6 +210,137 @@ export function parsePnpmLock(text: string): LockParse {
   return { status: "ok", packages: [...out.values()], ...(root && { root }) };
 }
 
+const JSON_STR = String.raw`"(?:[^"\\]|\\.)*"`;
+const JSONC_COMMENT = new RegExp(`${JSON_STR}|//[^\\n]*|/\\*[\\s\\S]*?\\*/`, "g");
+const JSONC_TRAILING_COMMA = new RegExp(`${JSON_STR}|,(?=\\s*[}\\]])`, "g");
+/** JSON with comments and trailing commas (bun.lock); strings are kept as they are. */
+const parseJsonc = (t: string): unknown => {
+  const keep = (m: string): string => (m[0] === '"' ? m : "");
+  return JSON.parse(t.replace(JSONC_COMMENT, keep).replace(JSONC_TRAILING_COMMA, keep));
+};
+
+const BUN_DEP_SECTIONS = ["dependencies", "devDependencies", "optionalDependencies"];
+
+/** `"@scope/a/b"` → `["@scope/a", "b"]`: a bun.lock package key is the install path as package names. */
+function bunKeyNames(key: string): string[] {
+  const s = key.split("/");
+  const out: string[] = [];
+  for (let i = 0; i < s.length; i++) out.push(s[i]!.startsWith("@") && i + 1 < s.length ? `${s[i]}/${s[++i]}` : s[i]!);
+  return out;
+}
+
+/**
+ * bun.lock (Bun 1.1+ text lockfile, lockfileVersion 0 / 1). `packages` keys are install paths
+ * (`parent/child` for a nested copy); a value is `[ident, ...]` with `ident = name@resolution`: npm
+ * entries are `[ident, registry tarball or "", info, integrity]`, git `[ident, info, tag, integrity]`,
+ * file / link / tarball `[ident, info]`, workspace `[ident]`. A dependency resolves from its parent's
+ * path upward, like node_modules. Roots = every workspace (`""` is the root package.json): their
+ * dependencies are direct; packages reachable only through devDependencies are dev.
+ */
+export function parseBunLock(text: string): LockParse {
+  let d: unknown;
+  try {
+    d = parseJsonc(text);
+  } catch {
+    return { status: "error", detail: "invalid JSON", packages: [] };
+  }
+  if (!isObj(d) || !isObj(d.packages)) return { status: "error", detail: "invalid lockfile", packages: [] };
+  if (d.lockfileVersion !== 0 && d.lockfileVersion !== 1) return { status: "error", detail: `unsupported lockfileVersion ${String(d.lockfileVersion)}`, packages: [] };
+  const pk = d.packages;
+  const workspaces = isObj(d.workspaces) ? Object.entries(d.workspaces).filter((e): e is [string, Obj] => isObj(e[1])) : [];
+  const info = (key: string): Obj => {
+    const e = pk[key];
+    return (Array.isArray(e) ? (e.find(isObj) as Obj | undefined) : undefined) ?? {};
+  };
+  const resolve = (from: string[], name: string): string | undefined => {
+    for (let i = from.length; i >= 0; i--) {
+      const k = [...from.slice(0, i), name].join("/");
+      if (Array.isArray(pk[k])) return k;
+    }
+    return undefined;
+  };
+  const names = (o: Obj, sections: string[]): string[] => sections.flatMap((s) => (isObj(o[s]) ? Object.keys(o[s] as Obj) : []));
+  const identOf = (key: string): { name: string; version: string } | null => {
+    const e = pk[key];
+    const ident = Array.isArray(e) && typeof e[0] === "string" ? e[0] : "";
+    const at = ident.indexOf("@", 1);
+    return at > 0 ? { name: ident.slice(0, at), version: ident.slice(at + 1) } : null;
+  };
+
+  const direct = new Set<string>();
+  const prodRoots: string[] = [];
+  for (const [path, ws] of workspaces) {
+    // Packages nested under a workspace member are keyed by its package name (`@app/ui/lodash`).
+    const from = path === "" || typeof ws.name !== "string" ? [] : [ws.name];
+    for (const sect of BUN_DEP_SECTIONS) {
+      for (const n of names(ws, [sect])) {
+        const k = resolve(from, n);
+        if (!k) continue;
+        direct.add(k);
+        if (sect !== "devDependencies") prodRoots.push(k);
+      }
+    }
+    // Bun installs peers: prod, but not declared dependencies.
+    for (const n of names(ws, ["peerDependencies"])) {
+      const k = resolve(from, n);
+      if (k) prodRoots.push(k);
+    }
+  }
+  const prod = new Set<string>();
+  const stack = [...prodRoots];
+  while (stack.length) {
+    const k = stack.pop()!;
+    if (prod.has(k)) continue;
+    prod.add(k);
+    const from = bunKeyNames(k);
+    for (const n of names(info(k), ["dependencies", "optionalDependencies", "peerDependencies"])) {
+      const c = resolve(from, n);
+      if (c) stack.push(c);
+    }
+  }
+
+  const out = new Map<string, Package>();
+  for (const [key, e] of Object.entries(pk)) {
+    const id = identOf(key);
+    if (!id || !Array.isArray(e)) continue;
+    const resolved = typeof e[1] === "string" && e[1] ? e[1] : undefined;
+    const integrity = e.find((x): x is string => typeof x === "string" && /^sha\d+-/.test(x));
+    const p: Package = {
+      ecosystem: "npm",
+      name: id.name,
+      version: id.version || null,
+      dev: !prod.has(key),
+      direct: direct.has(key),
+      origin: npmOrigin(id.version, resolved),
+      ...(integrity && { integrity }),
+      ...(resolved && { resolved }),
+    };
+    const prev = out.get(`${id.name}@${id.version}`);
+    if (!prev) out.set(`${id.name}@${id.version}`, p);
+    else {
+      prev.dev &&= p.dev; // prod anywhere wins
+      prev.direct ||= p.direct;
+    }
+  }
+
+  // §7-8: what the lock recorded for the root package.json.
+  const top = workspaces.find(([path]) => path === "")?.[1];
+  let root: LockParse["root"];
+  if (top) {
+    root = { deps: {}, versions: {} };
+    for (const sect of BUN_DEP_SECTIONS) {
+      if (!isObj(top[sect])) continue;
+      for (const [n, spec] of Object.entries(top[sect] as Obj)) {
+        root.deps[n] = String(spec);
+        const k = resolve([], n);
+        const v = k ? identOf(k)?.version : undefined;
+        if (v) root.versions[n] = v;
+      }
+    }
+  }
+  return { status: "ok", packages: [...out.values()], ...(root && { root }) };
+}
+
 const stripPeers = (k: string): string => {
   const i = k.indexOf("(");
   return i < 0 ? k : k.slice(0, i);

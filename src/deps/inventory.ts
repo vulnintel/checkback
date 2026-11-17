@@ -5,16 +5,16 @@ import { join, resolve } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import { parse as parseYaml } from "yaml";
 import { collectFiles, decode, MAX_FILE_BYTES, readText, type FileEntry } from "../files.js";
-import { normalizePyName, parseNpmLock, parsePnpmLock, parseRequirements, parseUvLock, PYPI_HOST, type Ecosystem, type Package } from "./locks.js";
+import { normalizePyName, parseBunLock, parseNpmLock, parsePnpmLock, parseRequirements, parseUvLock, PYPI_HOST, type Ecosystem, type Package } from "./locks.js";
 
 export interface Lockfile {
   /** CWD-relative path. */
   path: string;
-  kind: "npm" | "pnpm" | "uv" | "requirements";
+  kind: "npm" | "pnpm" | "bun" | "uv" | "requirements";
   status: "ok" | "regenerate" | "error";
   detail?: string;
   packages: Package[];
-  /** What the lock records for its root manifest (npm v2/v3, pnpm, uv). */
+  /** What the lock records for its root manifest (npm v2/v3, pnpm, bun, uv). */
   root?: { deps: Record<string, string>; versions: Record<string, string> };
 }
 
@@ -46,14 +46,14 @@ export interface PrivateConfig {
 
 export interface Inventory {
   lockfiles: Lockfile[];
-  /** Lockfiles we recognize but do not parse yet (patch release): yarn, bun, poetry, Pipfile.lock. */
+  /** Lockfiles we recognize but do not parse yet (patch release): yarn, binary bun.lockb, poetry, Pipfile.lock. */
   unsupported: { path: string; kind: string }[];
   manifests: Manifest[];
   privateConfig: PrivateConfig;
 }
 
 const UNSUPPORTED = new Map([
-  ["yarn.lock", "yarn"], ["bun.lock", "bun"], ["bun.lockb", "bun-binary"], ["poetry.lock", "poetry"], ["Pipfile.lock", "pipenv"],
+  ["yarn.lock", "yarn"], ["bun.lockb", "bun-binary"], ["poetry.lock", "poetry"], ["Pipfile.lock", "pipenv"],
 ]);
 const NPM_HOST = /^https?:\/\/registry\.(?:npmjs\.org|yarnpkg\.com)\/?$/i;
 const LOCAL_SPEC = /^(workspace|file|link|portal|git|git\+[a-z]+|github|gitlab|bitbucket|https?):|^[./~]|^[\w-]+\/[\w.-]+(#.*)?$/;
@@ -178,6 +178,9 @@ export async function readInventory(cwd: string, files?: FileEntry[], env: NodeJ
     } else if (b === "pnpm-lock.yaml") {
       const t = await text(f.rel);
       inv.lockfiles.push({ path: f.rel, kind: "pnpm", ...(t === null ? { status: "error", detail: "unreadable", packages: [] } : parsePnpmLock(t)) });
+    } else if (b === "bun.lock") {
+      const t = await text(f.rel);
+      inv.lockfiles.push({ path: f.rel, kind: "bun", ...(t === null ? { status: "error", detail: "unreadable", packages: [] } : parseBunLock(t)) });
     } else if (/^requirements[^/]*\.txt$/i.test(b)) {
       const t = await text(f.rel);
       if (t === null) continue;

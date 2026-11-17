@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Dependency checks read `bun.lock` (Bun 1.2+ text lockfile, the Lovable default): vulnerable,
+  malicious and non-existent packages, SBOM and lock consistency now cover Bun projects, including
+  workspaces. The binary `bun.lockb` is still not read; the notice suggests
+  `bun install --save-text-lockfile`.
+
 ### Changed
 
 - `homepage` in `package.json` and the plugin manifest now points to the project website

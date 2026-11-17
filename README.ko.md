@@ -46,8 +46,8 @@ npx checkback
 합니다. 그때까지 해당 패키지는 OSV/CVSS 심각도를 유지하되 "심각도 잠정"으로 표시되고, 빠른 선택의
 긴급·긴급+높음에서는 빠집니다.
 
-의존성 검사는 `package-lock.json`, `pnpm-lock.yaml`, `uv.lock`, `requirements*.txt`를 읽습니다.
-`bun.lock`만 있는 프로젝트(Lovable 기본값)도 다른 검사는 모두 받지만, 의존성은 아직 검사하지 못합니다.
+의존성 검사는 `package-lock.json`, `pnpm-lock.yaml`, `bun.lock`, `uv.lock`, `requirements*.txt`를 읽습니다.
+예전 바이너리 형식 `bun.lockb`는 읽지 못하므로 `bun install --save-text-lockfile`로 `bun.lock`을 만들어 주세요.
 같은 폴더에 `uv.lock`과 `requirements*.txt`가 함께 있으면 같은 버전의 패키지는 `uv.lock`을 가리키는 발견
 항목 하나로 합칩니다.
 
@@ -139,7 +139,7 @@ flowchart LR
 | git을 검사합니다: 추적 중이거나 이력에 남은 `.env`와 키 파일, `.env` 규칙이 없는 `.gitignore` | 권한 검사, IDOR, 인젝션 등 앱 로직 검사. 대신 AI용 리뷰 체크리스트를 써 주며, AI의 답은 다시 검사하지 않습니다 |
 | Supabase 마이그레이션(RLS 없는 테이블, 항상 참인 정책)과 Firebase 규칙을 읽습니다 | Supabase·Firebase 프로젝트나 데이터베이스 접속 |
 | 와일드카드 CORS, 디버그 모드, 공개된 소스맵을 찾습니다 | 웹사이트 스캔이나 네트워크 너머의 검사 |
-| `package-lock.json`, `pnpm-lock.yaml`, `uv.lock`, `requirements*.txt`를 읽고, (동의 후) 취약·악성·존재하지 않는 패키지를 조회합니다 | yarn, bun, poetry, Pipfile lock 파싱(아직 못 합니다. "문제 없음" 대신 "아직 지원하지 않음"이라고 알립니다) |
+| `package-lock.json`, `pnpm-lock.yaml`, `bun.lock`, `uv.lock`, `requirements*.txt`를 읽고, (동의 후) 취약·악성·존재하지 않는 패키지를 조회합니다 | yarn, 바이너리 bun.lockb, poetry, Pipfile lock 파싱(아직 못 합니다. "문제 없음" 대신 "아직 지원하지 않음"이라고 알립니다) |
 | CycloneDX SBOM을 로컬에서 만듭니다 | 코드를 어디로든 업로드 |
 | 수정 후 자기가 찾은 항목을 다시 검사합니다 | 코드 수정, AI를 스스로 실행 |
 

@@ -36,7 +36,7 @@ npx checkback
 
 一次扫描最多等待外部查询 90 秒，然后先显示已有的结果，并注明哪些查询还没返回；下一次扫描会从缓存继续。公开优先级查询（KEV、VPI、EPSS）的速度约为每分钟 50 个漏洞，因此有几百个已知漏洞的项目需要扫描 3 到 4 次，所有优先级标记才会填满。在此之前，这些包沿用 OSV/CVSS 严重程度，并标为“严重程度暂定”，快速选择中的“严重”和“严重+高危”会跳过它们。
 
-依赖检查读取 `package-lock.json`、`pnpm-lock.yaml`、`uv.lock` 和 `requirements*.txt`。只有 `bun.lock` 的项目（Lovable 的默认配置）可以使用其他所有检查，但暂时不检查其依赖。如果 `uv.lock` 和 `requirements*.txt` 在同一目录下，同一版本的包只算一个发现项，并指向 `uv.lock`。
+依赖检查读取 `package-lock.json`、`pnpm-lock.yaml`、`bun.lock`、`uv.lock` 和 `requirements*.txt`。旧的二进制格式 `bun.lockb` 无法读取，请运行 `bun install --save-text-lockfile` 生成 `bun.lock`。如果 `uv.lock` 和 `requirements*.txt` 在同一目录下，同一版本的包只算一个发现项，并指向 `uv.lock`。
 
 更习惯待在终端或 Claude Code 里？请看 [Claude Code 插件](#claude-code-插件)、[MCP 服务器](#mcp-服务器) 和 [命令行](#命令行)。
 
@@ -106,7 +106,7 @@ flowchart LR
 | 检查 git：被跟踪或仍留在历史中的 `.env` 和密钥文件，以及缺少 `.env` 规则的 `.gitignore` | 检查授权、IDOR、注入或其他应用逻辑。它会为你的 AI 写一份审查清单，但不会复查 AI 的结论 |
 | 读取 Supabase 迁移文件（未开启 RLS 的表、恒为真的策略）和 Firebase 规则 | 连接你的 Supabase 或 Firebase 项目或数据库 |
 | 标记通配符 CORS、调试模式、公开的 source map | 扫描网站，或通过网络扫描任何东西 |
-| 读取 `package-lock.json`、`pnpm-lock.yaml`、`uv.lock` 和 `requirements*.txt`；（经同意后）查询有漏洞、恶意和不存在的包 | 解析 yarn、bun、poetry 或 Pipfile 的 lock 文件（暂不支持，会显示"暂不支持"而不是"没有问题"） |
+| 读取 `package-lock.json`、`pnpm-lock.yaml`、`bun.lock`、`uv.lock` 和 `requirements*.txt`；（经同意后）查询有漏洞、恶意和不存在的包 | 解析 yarn、二进制 bun.lockb、poetry 或 Pipfile 的 lock 文件（暂不支持，会显示"暂不支持"而不是"没有问题"） |
 | 在本地生成 CycloneDX SBOM | 把你的代码上传到任何地方 |
 | 修复后复查自己的发现项 | 修改你的代码，或自行运行 AI |
 
