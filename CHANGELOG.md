@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- `homepage` in `package.json` and the plugin manifest now points to the project website
+  (https://www.vulnintelapp.com/checkback); the READMEs link to it too.
+
 ## [0.2.4] - 2026-11-16
 
 ### Fixed

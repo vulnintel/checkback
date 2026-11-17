@@ -2,6 +2,8 @@
 
 [English](https://github.com/vulnintel/checkback/blob/main/README.md) · 한국어 · [简体中文](https://github.com/vulnintel/checkback/blob/main/README.zh-CN.md)
 
+웹사이트: [vulnintelapp.com/ko/checkback](https://www.vulnintelapp.com/ko/checkback)
+
 **AI 코딩 도구가 남긴 보안 실수를 찾고, 수정은 쓰던 AI에게 넘긴 뒤, 다시 검사합니다.**
 
 [![CI](https://github.com/vulnintel/checkback/actions/workflows/ci.yml/badge.svg)](https://github.com/vulnintel/checkback/actions/workflows/ci.yml)

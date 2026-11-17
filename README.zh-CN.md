@@ -2,6 +2,8 @@
 
 [English](https://github.com/vulnintel/checkback/blob/main/README.md) · [한국어](https://github.com/vulnintel/checkback/blob/main/README.ko.md) · 简体中文
 
+网站：[vulnintelapp.com/zh/checkback](https://www.vulnintelapp.com/zh/checkback)
+
 **找出 AI 编程工具留下的安全疏漏，把修复交还给你的 AI，然后再检查一遍。**
 
 [![CI](https://github.com/vulnintel/checkback/actions/workflows/ci.yml/badge.svg)](https://github.com/vulnintel/checkback/actions/workflows/ci.yml)
