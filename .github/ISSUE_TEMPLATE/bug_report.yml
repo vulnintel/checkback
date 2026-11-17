@@ -23,6 +23,7 @@ body:
         - CLI (scan, sbom, consent, ...)
         - MCP server
         - Claude Code plugin
+        - Codex plugin
         - Other
     validations:
       required: true

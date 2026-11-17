@@ -27,8 +27,9 @@ jobs:
             const fs = require("fs");
             const v = require("./package.json").version;
             const plugin = JSON.parse(fs.readFileSync("plugin/.claude-plugin/plugin.json", "utf8")).version;
+            const codex = JSON.parse(fs.readFileSync("plugin/.codex-plugin/plugin.json", "utf8")).version;
             const pin = JSON.parse(fs.readFileSync("plugin/.mcp.json", "utf8")).mcpServers.checkback.args[1];
-            const bad = [["tag", process.env.GITHUB_REF_NAME, "v" + v], ["plugin.json", plugin, v], [".mcp.json", pin, "checkback@" + v]].filter(([, a, b]) => a !== b);
+            const bad = [["tag", process.env.GITHUB_REF_NAME, "v" + v], ["plugin.json", plugin, v], ["codex plugin.json", codex, v], [".mcp.json", pin, "checkback@" + v]].filter(([, a, b]) => a !== b);
             for (const [what, a, b] of bad) console.error(`${what}: ${a} != ${b}`);
             process.exit(bad.length ? 1 : 0);'
       - run: pnpm install --frozen-lockfile

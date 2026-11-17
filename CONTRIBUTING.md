@@ -42,7 +42,7 @@ Docker and bash (Git Bash on Windows).
 | `src/gui/`, `web/` | Local web server and screen |
 | `src/net/` | OSV, registries, VulnIntel clients and call budget |
 | `templates/default.yaml` | Default rules |
-| `plugin/`, `.claude-plugin/` | Claude Code plugin and marketplace |
+| `plugin/`, `.claude-plugin/` | Claude Code and Codex plugin (shared skill and `.mcp.json`) and marketplace |
 | `test/` | Tests; `test/helpers.ts` builds fake keys |
 
 ## Changing rules

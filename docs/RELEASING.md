@@ -39,9 +39,10 @@ Suggested topics: `security`, `secret-scanning`, `vibe-coding`, `ai-coding`, `su
 
 ## Every release
 
-1. Update the version in three places (the workflow checks they match the tag):
-   `package.json` `version`, `plugin/.claude-plugin/plugin.json` `version`, and the
-   `checkback@<version>` pin in `plugin/.mcp.json`.
+1. Update the version in four places (the workflow checks they match the tag):
+   `package.json` `version`, `plugin/.claude-plugin/plugin.json` `version`,
+   `plugin/.codex-plugin/plugin.json` `version`, and the `checkback@<version>` pin in
+   `plugin/.mcp.json`.
 2. Move the `[Unreleased]` notes in `CHANGELOG.md` under the new version with today's date.
 3. Locally: `pnpm install --frozen-lockfile && pnpm build && pnpm test && pnpm e2e:docker`.
 4. Commit, then tag and push:

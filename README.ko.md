@@ -51,7 +51,8 @@ npx checkback
 같은 폴더에 `uv.lock`과 `requirements*.txt`가 함께 있으면 같은 버전의 패키지는 `uv.lock`을 가리키는 발견
 항목 하나로 합칩니다.
 
-터미널이나 Claude Code 안에서 쓰고 싶다면 [Claude Code 플러그인](#claude-code-플러그인),
+터미널이나 Claude Code·Codex 안에서 쓰고 싶다면 [Claude Code 플러그인](#claude-code-플러그인),
+[Codex 플러그인](#codex-플러그인),
 [MCP 서버](#mcp-서버), [명령줄](#명령줄)을 보세요.
 
 ## 왜 checkback인가
@@ -158,7 +159,8 @@ checkback은 Claude Code용 플러그인을 함께 제공합니다. Claude Code�
 따로 보고합니다. 수정을 요청하면 모든 편집은 Claude Code의 평소 승인 절차를 거칩니다. 그 뒤 `scan`을 다시
 호출해, checkback이 알려 주는 항목별 재검사 상태를 그대로 보고합니다.
 
-플러그인은 파일 3개이며 모두 [`plugin/`](plugin)에 있습니다.
+플러그인은 파일 3개이며 모두 [`plugin/`](plugin)에 있습니다(네 번째 파일 `.codex-plugin/plugin.json`은
+[Codex 플러그인](#codex-플러그인)용).
 
 | 파일 | 용도 |
 |---|---|
@@ -178,6 +180,33 @@ VulnIntel 키 연결, 패키지 감시, 발견 항목 무시는 채팅이 아니
 터미널에서 `npx -y checkback@<version> --version`을 한 번 실행해 npx 캐시를 채운 뒤 Claude Code를 다시
 시작하세요. 느린 컴퓨터에서는 Claude Code의 MCP 시작 제한 시간을 늘려도 됩니다. 예:
 `MCP_TIMEOUT=120000`.
+
+## Codex 플러그인
+
+같은 [`plugin/`](plugin) 폴더가 OpenAI Codex용 플러그인이기도 합니다. 터미널에서 마켓플레이스를 추가하고
+플러그인을 설치하세요.
+
+```sh
+codex plugin marketplace add vulnintel/checkback
+codex plugin add checkback@vulnintel
+```
+
+그다음 프로젝트 폴더에서 Codex를 시작하고 "checkback으로 보안 점검해줘"(또는 "run a security check with
+checkback")라고 요청하세요. 다른 보안 플러그인이 설치돼 있으면 checkback을 이름으로 부르는 편이 확실합니다.
+Codex도 Claude Code와 같은 스킬을 따릅니다. `scan`, 선택적인 "AI 판단" 리뷰, 요청할 때만 수정, 다시
+`scan`. checkback 도구 호출과 편집마다 Codex가 승인을 묻고, 플러그인은 이를 바꾸지 않습니다.
+
+Codex는 Claude Code 플러그인이 쓰는 파일을 그대로 읽습니다. 스킬과 `.mcp.json`은 복사본이 아니라 공용입니다.
+
+| 파일 | 용도 |
+|---|---|
+| `.codex-plugin/plugin.json` | Codex 매니페스트: 이름, 버전, `./skills/`·`./.mcp.json` 위치 |
+| `skills/checkback/SKILL.md` | Claude Code 플러그인과 공용 |
+| `.mcp.json` | Claude Code 플러그인과 공용(`npx -y checkback@<version> mcp`, 키 없음) |
+
+Codex는 마켓플레이스를 [`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json)에서 읽습니다.
+업데이트는 `codex plugin marketplace upgrade vulnintel` 후 플러그인을 다시 설치하고, 제거는
+`codex plugin remove checkback@vulnintel`로 합니다.
 
 ## MCP 서버
 

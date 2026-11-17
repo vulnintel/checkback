@@ -6,6 +6,18 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Codex plugin: `plugin/.codex-plugin/plugin.json` makes the same `plugin/` folder installable in
+  OpenAI Codex (`codex plugin marketplace add vulnintel/checkback`, then
+  `codex plugin add checkback@vulnintel`). It reuses the Claude Code plugin's skill and
+  `.mcp.json`; the release workflow checks its version with the others.
+
+### Changed
+
+- The plugin skill no longer names only Claude Code: edits go through "the coding tool's normal
+  approval (Claude Code or Codex)", and it does not start other `claude` or `codex` processes.
+
 ## [0.2.5] - 2026-11-17
 
 ### Added

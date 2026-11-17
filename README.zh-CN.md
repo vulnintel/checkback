@@ -38,7 +38,7 @@ npx checkback
 
 依赖检查读取 `package-lock.json`、`pnpm-lock.yaml`、`bun.lock`、`uv.lock` 和 `requirements*.txt`。旧的二进制格式 `bun.lockb` 无法读取，请运行 `bun install --save-text-lockfile` 生成 `bun.lock`。如果 `uv.lock` 和 `requirements*.txt` 在同一目录下，同一版本的包只算一个发现项，并指向 `uv.lock`。
 
-更习惯待在终端或 Claude Code 里？请看 [Claude Code 插件](#claude-code-插件)、[MCP 服务器](#mcp-服务器) 和 [命令行](#命令行)。
+更习惯待在终端、Claude Code 或 Codex 里？请看 [Claude Code 插件](#claude-code-插件)、[Codex 插件](#codex-插件)、[MCP 服务器](#mcp-服务器) 和 [命令行](#命令行)。
 
 ## 为什么用 checkback
 
@@ -121,7 +121,7 @@ checkback 自带一个 Claude Code 插件。在 Claude Code 中添加 marketplac
 
 然后说"帮我做一次安全检查"（或 "run a security check"）。Claude 会调用 checkback 的 `scan` 并列出发现项。如果你需要，它还会用 checkback 的检查清单审查代码，并以"AI 判断"单独报告。当你让它修复时，每次修改都会经过 Claude Code 正常的批准提示。之后它会再次调用 `scan`，按 checkback 给出的结果报告每一项的复查状态。
 
-插件只有三个文件，都在 [`plugin/`](plugin) 中：
+插件只有三个文件，都在 [`plugin/`](plugin) 中（第四个文件 `.codex-plugin/plugin.json` 用于 [Codex 插件](#codex-插件)）：
 
 | 文件 | 用途 |
 |---|---|
@@ -136,6 +136,27 @@ checkback 自带一个 Claude Code 插件。在 Claude Code 中添加 marketplac
 连接 VulnIntel 密钥、订阅依赖包和忽略发现项都在 `npx checkback` 中完成，而不是在对话里。
 
 如果首次使用时 `/mcp` 显示 checkback 服务器连接失败，说明 npx 还在下载包。在终端里运行一次 `npx -y checkback@<version> --version` 填充 npx 缓存，然后重启 Claude Code。在较慢的机器上，也可以调高 Claude Code 的 MCP 启动超时，例如 `MCP_TIMEOUT=120000`。
+
+## Codex 插件
+
+同一个 [`plugin/`](plugin) 文件夹也是 OpenAI Codex 的插件。在终端中添加 marketplace 并安装插件：
+
+```sh
+codex plugin marketplace add vulnintel/checkback
+codex plugin add checkback@vulnintel
+```
+
+然后在项目文件夹中启动 Codex，说"用 checkback 帮我做一次安全检查"（或 "run a security check with checkback"）。如果还装了其他安全插件，直接点名 checkback 更稳妥。Codex 遵循与 Claude Code 相同的 skill：`scan`、可选的"AI 判断"审查、只在你要求时修复、再次 `scan`。每次调用 checkback 工具和每次修改，Codex 都会请你批准，插件不会改变这一点。
+
+Codex 直接读取 Claude Code 插件已有的文件——skill 和 `.mcp.json` 是共用的，不是副本：
+
+| 文件 | 用途 |
+|---|---|
+| `.codex-plugin/plugin.json` | Codex 清单：名称、版本，以及指向 `./skills/` 和 `./.mcp.json` 的路径 |
+| `skills/checkback/SKILL.md` | 与 Claude Code 插件共用 |
+| `.mcp.json` | 与 Claude Code 插件共用（`npx -y checkback@<version> mcp`，不带密钥） |
+
+Codex 从 [`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json) 读取 marketplace。更新时运行 `codex plugin marketplace upgrade vulnintel` 后重新安装插件；卸载运行 `codex plugin remove checkback@vulnintel`。
 
 ## MCP 服务器
 

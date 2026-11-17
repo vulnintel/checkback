@@ -12,8 +12,8 @@ const files = (dir: string): string[] =>
   });
 
 describe("AC69 plugin package (§7-7-2)", () => {
-  it("contains only plugin.json, SKILL.md and .mcp.json — no hooks, bin, agents, commands", () => {
-    expect(files(join(root, "plugin")).sort()).toEqual([".claude-plugin/plugin.json", ".mcp.json", "skills/checkback/SKILL.md"]);
+  it("contains only plugin.json (Claude Code, Codex), SKILL.md and .mcp.json — no hooks, bin, agents, commands", () => {
+    expect(files(join(root, "plugin")).sort()).toEqual([".claude-plugin/plugin.json", ".codex-plugin/plugin.json", ".mcp.json", "skills/checkback/SKILL.md"]);
   });
 
   it("names: plugin checkback, marketplace vulnintel; no Claude/Anthropic in product names (AC70)", () => {
@@ -33,8 +33,20 @@ describe("AC69 plugin package (§7-7-2)", () => {
     expect(cfg.args).toEqual(["-y", `checkback@${JSON.parse(read("plugin/.claude-plugin/plugin.json")).version}`, "mcp"]);
     expect(cfg.args[1]).toMatch(/^checkback@\d+\.\d+\.\d+$/);
     expect(JSON.parse(read("package.json")).version).toBe(JSON.parse(read("plugin/.claude-plugin/plugin.json")).version); // released together
+    expect(JSON.parse(read("plugin/.codex-plugin/plugin.json")).version).toBe(JSON.parse(read("package.json")).version);
     expect(cfg.env).toBeUndefined();
     expect(mcp).not.toMatch(/VULNINTEL|api[_-]?key|vi_live_/i);
+  });
+
+  it("Codex manifest reuses the shared skill and .mcp.json, with no Claude/Anthropic in names", () => {
+    const codex = JSON.parse(read("plugin/.codex-plugin/plugin.json"));
+    expect(codex.name).toBe("checkback");
+    expect(codex.skills).toBe("./skills/");
+    expect(codex.mcpServers).toBe("./.mcp.json");
+    expect(codex.description).toMatch(/a plugin for Codex$/);
+    expect(codex.hooks).toBeUndefined();
+    expect(codex.apps).toBeUndefined();
+    for (const n of [codex.name, codex.interface.displayName, codex.interface.developerName]) expect(n).not.toMatch(/claude|anthropic/i);
   });
 
   it("skill: scan → (optional) ai_check_prompt → fix_prompts → approved edits → scan, with the required rules", () => {

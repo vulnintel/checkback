@@ -53,7 +53,8 @@ Dependency checks read `package-lock.json`, `pnpm-lock.yaml`, `bun.lock`, `uv.lo
 writes a `bun.lock` next to it. When `uv.lock` and a `requirements*.txt` sit in the same folder,
 a package at the same version is one finding that points at `uv.lock`.
 
-Prefer to stay in the terminal or in Claude Code? See [Claude Code plugin](#claude-code-plugin),
+Prefer to stay in the terminal, Claude Code or Codex? See [Claude Code plugin](#claude-code-plugin),
+[Codex plugin](#codex-plugin),
 [MCP server](#mcp-server) and [Command line](#command-line).
 
 ## Why checkback
@@ -163,7 +164,8 @@ as "AI judgment". When you ask it to fix things, every edit goes through Claude 
 approval prompt. Then it calls `scan` again and reports each item's re-check state as checkback
 gives it.
 
-The plugin is three files, all in [`plugin/`](plugin):
+The plugin is three files, all in [`plugin/`](plugin) (the fourth, `.codex-plugin/plugin.json`, is the
+[Codex plugin](#codex-plugin)):
 
 | File | Purpose |
 |---|---|
@@ -184,6 +186,35 @@ If `/mcp` shows the checkback server failed to connect on first use, npx was sti
 package. Run `npx -y checkback@<version> --version` once in a terminal to fill the npx cache, then
 restart Claude Code. On slow machines you can also raise Claude Code's MCP start-up timeout, for
 example `MCP_TIMEOUT=120000`.
+
+## Codex plugin
+
+The same [`plugin/`](plugin) folder is also a plugin for OpenAI Codex. In a terminal, add the
+marketplace and install the plugin:
+
+```sh
+codex plugin marketplace add vulnintel/checkback
+codex plugin add checkback@vulnintel
+```
+
+Then start Codex in your project folder and ask "run a security check with checkback" (or
+"checkback으로 보안 점검해줘"). Naming checkback helps when another security plugin is installed.
+Codex follows the same skill as Claude Code: `scan`, optional "AI judgment" review, fixes only after
+you ask, then `scan` again. Codex asks for your approval before each checkback tool call and each
+edit; the plugin does not change that.
+
+Codex reads the files the Claude Code plugin already uses — the skill and `.mcp.json` are shared,
+not copied:
+
+| File | Purpose |
+|---|---|
+| `.codex-plugin/plugin.json` | Codex manifest: name, version, and pointers to `./skills/` and `./.mcp.json` |
+| `skills/checkback/SKILL.md` | Shared with the Claude Code plugin |
+| `.mcp.json` | Shared with the Claude Code plugin (`npx -y checkback@<version> mcp`, no key) |
+
+Codex reads the marketplace from [`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json).
+To update, run `codex plugin marketplace upgrade vulnintel` and install the plugin again. To remove
+it, run `codex plugin remove checkback@vulnintel`.
 
 ## MCP server
 

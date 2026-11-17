@@ -1,0 +1,24 @@
+{
+  "name": "checkback",
+  "version": "0.2.5",
+  "description": "Security checks for vibe-coded apps — a plugin for Codex",
+  "author": {
+    "name": "VulnIntel",
+    "url": "https://www.vulnintelapp.com"
+  },
+  "homepage": "https://www.vulnintelapp.com/checkback",
+  "repository": "https://github.com/vulnintel/checkback",
+  "license": "Apache-2.0",
+  "keywords": ["security", "secrets", "dependencies", "supabase", "firebase"],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "checkback",
+    "shortDescription": "Local security check: leaked keys, open access rules, risky packages",
+    "developerName": "VulnIntel",
+    "category": "Security",
+    "capabilities": ["Interactive", "Read", "Write"],
+    "websiteURL": "https://www.vulnintelapp.com/checkback",
+    "defaultPrompt": ["Run a checkback security check on this project."]
+  }
+}
