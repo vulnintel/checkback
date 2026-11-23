@@ -6,8 +6,20 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-23
+
 ### Added
 
+- Scan history (GUI "History" tab): each scan is kept per project, up to 20 with the first scan
+  pinned. Compare the latest scan with the first scan (default) or any round to see what was
+  fixed, what is still there and what is new. Partial scans (offline, lookups off, timeout) and
+  hand-edited locks are shown as such, never as fixed; ignored items are left out of comparisons.
+  Stored files keep fingerprints only, never values.
+- With a VulnIntel key: findings whose CVEs are all `done` in the remediation tracker move to a
+  separate "done in tracker, found again" group instead of the to-do list (not hidden — the
+  tracker is not per project). CVEs that checkback registered and that disappeared since the
+  previous scan can be marked done with one button; it sends the status only, so your note stays,
+  and never touches won't fix / not applicable or items you created on the web.
 - Codex plugin: `plugin/.codex-plugin/plugin.json` makes the same `plugin/` folder installable in
   OpenAI Codex (`codex plugin marketplace add vulnintel/checkback`, then
   `codex plugin add checkback@vulnintel`). It reuses the Claude Code plugin's skill and
