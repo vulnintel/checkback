@@ -98,7 +98,17 @@ export interface ScanView {
   compare?: Compare;
 }
 
-export type View = "consent" | "start" | "progress" | "result" | "templates" | "sbom" | "settings";
+export type View = "consent" | "start" | "progress" | "result" | "history" | "templates" | "sbom" | "settings";
+
+/** Key mode tracker state of the shown result (B1, B2). */
+export interface Tracker {
+  /** CVE → tracker status, registered CVEs only. */
+  status: Map<string, string>;
+  /** Finding ids whose CVEs are all `done` in the tracker. */
+  done: Set<string>;
+  /** CVEs the previous scan had and this one does not, registered by checkback and still open. */
+  completable: { cve: string; pkg: string; version: string }[];
+}
 
 export const S: {
   st: AppState | null;
@@ -106,9 +116,9 @@ export const S: {
   result: ScanView | null;
   template: string;
   selected: Set<string>;
-  /** CVE → already in the remediation tracker (key mode only). */
-  tracked: Map<string, boolean> | null;
-} = { st: null, view: "start", result: null, template: "default", selected: new Set(), tracked: null };
+  /** Remediation tracker state (key mode only); null = not asked yet for this result. */
+  tracker: Tracker | null;
+} = { st: null, view: "start", result: null, template: "default", selected: new Set(), tracker: null };
 
 let renderer: () => void = () => {};
 export const onRender = (fn: () => void): void => {

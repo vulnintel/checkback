@@ -4,7 +4,7 @@
 import { api, ApiFail } from "../api.js";
 import { copyText, extLink, h, modal, replace, toast } from "../dom.js";
 import { t } from "../i18n.js";
-import { go, report, S, type GFinding, type ScanView } from "../state.js";
+import { go, report, S, type GFinding, type ScanView, type Tracker } from "../state.js";
 import { loc } from "./recheck.js";
 
 interface FixPrompt {
@@ -258,10 +258,41 @@ async function trackFinding(cves: string[], done: () => void): Promise<void> {
     const r = await api<{ registered: number; error?: string }>("POST", "/api/track", { cves });
     if (r.error) toast(t().track.failed);
     else toast(t().track.done(r.registered));
-    S.tracked = null;
+    S.tracker = null;
     done();
   } catch (e) {
     if (e instanceof ApiFail && e.status !== 401) toast(t().track.failed);
     else report(e);
   }
+}
+
+/**
+ * B2: tracker items checkback added whose CVEs this scan no longer finds. The list and what is sent
+ * are on screen; nothing goes out until [Mark done].
+ */
+export function completeBox(rows: Tracker["completable"], done: () => void): HTMLElement {
+  const k = t().track;
+  const btn = h("button", { class: "btn primary", type: "button" }, k.completeSubmit);
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    try {
+      const r = await api<{ done: number; error?: string }>("POST", "/api/track/done", { cves: rows.map((x) => x.cve) });
+      toast(r.error ? k.completeFailed : k.completeDone(r.done));
+      S.tracker = null;
+      done();
+    } catch (e) {
+      btn.disabled = false;
+      if (e instanceof ApiFail && e.status !== 401) toast(k.completeFailed);
+      else report(e);
+    }
+  });
+  return h(
+    "section",
+    { class: "note", "aria-label": k.completeHead(rows.length) },
+    h("p", { class: "strong" }, k.completeHead(rows.length)),
+    h("p", { class: "muted small" }, k.completeLead),
+    h("ul", { class: "plain" }, rows.map((x) => h("li", { class: "loc" }, `${x.cve} · ${x.pkg}@${x.version}`))),
+    h("p", { class: "small" }, k.completeSends),
+    btn,
+  );
 }

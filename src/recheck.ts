@@ -70,6 +70,52 @@ const file = async (appDir: string, cwd: string, dir: string): Promise<string> =
 
 export const lastScanFile = (appDir: string, cwd: string): Promise<string> => file(appDir, cwd, "last-scan");
 export const snapshotFile = (appDir: string, cwd: string): Promise<string> => file(appDir, cwd, "fix-baseline");
+export const historyFile = (appDir: string, cwd: string): Promise<string> => file(appDir, cwd, "history");
+
+/**
+ * One scan in the per-project history (QA-003). Same value-free form as the last scan; `locks` keep
+ * only the packages of dependency items (see appendHistory). `seq` is the scan's number for good:
+ * it does not shift when older scans drop off.
+ */
+export type HistoryEntry = StoredScan & { seq: number };
+/** Kept scans, the first one included: the first scan is pinned, the oldest of the rest drop off. */
+export const HISTORY_MAX = 20;
+
+export async function readHistory(cwd: string, appDir = defaultAppDir()): Promise<HistoryEntry[]> {
+  const h = await readJson<unknown>(await historyFile(appDir, cwd), []);
+  return Array.isArray(h) ? (h as HistoryEntry[]) : [];
+}
+
+/** Lock states cut down to `names`: enough for the per-package "check (lock)" verdict, a fraction of the size. */
+function slimLocks(locks: LockState[], names: Set<string>): LockState[] {
+  const pick = <T>(o: Record<string, T>): Record<string, T> => Object.fromEntries(Object.entries(o).filter(([n]) => names.has(n)));
+  return locks.map((l) => ({
+    ...l,
+    manifestDeps: l.manifestDeps && pick(l.manifestDeps),
+    root: l.root && { deps: pick(l.root.deps), versions: pick(l.root.versions) },
+    entries: pick(l.entries),
+  }));
+}
+
+export async function appendHistory(cwd: string, s: StoredScan, appDir = defaultAppDir()): Promise<void> {
+  const list = await readHistory(cwd, appDir);
+  // A later scan is judged against any earlier one, so it keeps the packages every kept scan flagged.
+  const names = new Set([...list, s].flatMap((e) => e.findings.filter((f) => DEP_RULES.has(f.rule_id) && f.package).map((f) => f.package!)));
+  list.push({ ...s, locks: slimLocks(s.locks, names), seq: (list.at(-1)?.seq ?? list.length) + 1 });
+  if (list.length > HISTORY_MAX) list.splice(1, list.length - HISTORY_MAX);
+  await writeJson(await historyFile(appDir, cwd), list);
+}
+
+export async function clearHistory(cwd: string, appDir = defaultAppDir()): Promise<void> {
+  const { rm } = await import("node:fs/promises");
+  await rm(await historyFile(appDir, cwd), { force: true });
+}
+
+/** `cur` compared with an earlier history entry `base` by the previous-scan rules, lock verdicts included. */
+export function compareHistory(base: HistoryEntry, cur: HistoryEntry, ignored: Set<string>): { findings: Finding[]; compare: Compare } {
+  const findings = cur.findings.filter((f) => !ignored.has(f.id));
+  return compareWith({ ...base, locks: base.locks ?? [] }, "previous", findings, cur.checked, cur.locks ?? [], ignored, cur.engine_version);
+}
 
 export function storedFinding(f: Finding): StoredFinding {
   const { masked_match: _m, recheck: _r, recheck_note: _n, carried: _c, previous_version: _p, baseline_id: _b, ...rest } = f;

@@ -152,13 +152,25 @@ export function listRemediations(http: Http, budget: ViBudget, key: string, cveI
   return keyCall(http, budget, "key", key, `/remediations?${q}&per_page=100`);
 }
 
-export function putRemediation(http: Http, budget: ViBudget, key: string, cveId: string, pkg: string, version: string): Promise<KeyResult<unknown>> {
+/** The note prefix of tracker items checkback registered; only those may be marked done by it. */
+export const TRACK_NOTE_PREFIX = "checkback:";
+
+function remediationPut(http: Http, budget: ViBudget, key: string, cveId: string, body: { status: string; note?: string }): Promise<KeyResult<unknown>> {
   if (!/^CVE-\d{4}-\d{4,}$/.test(cveId)) return Promise.resolve({ ok: false, error: { kind: "bad_request" } });
   return keyCall(http, budget, "key", key, `/remediations/${cveId}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ status: "open", note: `checkback: ${pkg}@${version}` }),
+    body: JSON.stringify(body),
   });
+}
+
+export function putRemediation(http: Http, budget: ViBudget, key: string, cveId: string, pkg: string, version: string): Promise<KeyResult<unknown>> {
+  return remediationPut(http, budget, key, cveId, { status: "open", note: `${TRACK_NOTE_PREFIX} ${pkg}@${version}` });
+}
+
+/** Status only: the PUT is an upsert that replaces `note` only when the key is present, so the user's note stays. */
+export function markRemediationDone(http: Http, budget: ViBudget, key: string, cveId: string): Promise<KeyResult<unknown>> {
+  return remediationPut(http, budget, key, cveId, { status: "done" });
 }
 
 /** Package watch (B3): key path accepts package targets only. */

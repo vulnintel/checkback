@@ -18,7 +18,7 @@ import {
 import { gitInfo, globToPathspecs, type GitInfo } from "./git.js";
 import { matchAny, matchGlob } from "./glob.js";
 import { listIgnores } from "./ignores.js";
-import { compareWith, lastScanFile, lockStates, readLastScan, readSnapshot, storedFinding, type StoredScan } from "./recheck.js";
+import { appendHistory, compareWith, lastScanFile, lockStates, readLastScan, readSnapshot, storedFinding, type StoredScan } from "./recheck.js";
 import { envHasOnlyPublicValues, hiddenSourcemapConfig, LATE_RULES, REFINERS } from "./refine.js";
 import { RegexRunner, RULE_TOTAL_LIMIT_MS, type RawMatch } from "./regex-runner.js";
 import { allowlisted, decodeJwtPayload, fingerprint, isPlaceholder, mask } from "./secrets.js";
@@ -180,6 +180,7 @@ export async function scan(cwd: string, template: Template, opts: ScanOptions = 
     locks,
   };
   await writeJson(await lastScanFile(appDir, root), stored);
+  await appendHistory(root, stored, appDir);
   return result;
 }
 

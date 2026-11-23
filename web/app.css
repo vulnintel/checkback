@@ -430,6 +430,9 @@ table.rules { width: 100%; border-collapse: collapse; margin-top: 14px; font-siz
 table.rules th, table.rules td:nth-child(3), table.rules td:nth-child(4) { white-space: nowrap; }
 table.rules th { text-align: left; color: var(--muted); font-weight: 600; font-size: 13px; border-bottom: 1px solid var(--line2); padding: 8px; }
 table.rules td { border-bottom: 1px solid var(--line); padding: 10px 8px; vertical-align: top; }
+/* scan history: scrolls sideways on narrow screens instead of breaking words; the scan number never wraps */
+.scroll-x { overflow-x: auto; }
+table.history td:first-child { white-space: nowrap; }
 .ai-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 4px; }
 
 /* data table, footer, toast */

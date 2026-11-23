@@ -3,7 +3,9 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { apiKeyOf, updateConfig } from "../src/appdata.js";
 import { parseViResult } from "../src/builtins/vi-scan.js";
-import { ignoreCommand, parseSelection, trackCommand, watchCommand } from "../src/commands.js";
+import { goneCves, ignoreCommand, parseSelection, trackCommand, watchCommand } from "../src/commands.js";
+import { createRoutes } from "../src/gui/routes.js";
+import { readLastScan } from "../src/recheck.js";
 import { createMcpHandler, listIgnores, type McpScan } from "../src/index.js";
 import { byRule, consentedAppDir, mockNet, project, scanDefault, tempDir, tty, type NetMock } from "./helpers.js";
 
@@ -364,4 +366,121 @@ describe("MCP scan response time (deadline) with a large lock", () => {
     expect(after - before).toBeLessThan(400); // cached names are not asked again
     expect(new Set(net.calls.filter((c) => c.url.startsWith("https://registry.npmjs.org/")).map((c) => c.url)).size).toBe(after); // no name twice
   }, 30_000);
+});
+
+describe("QA-003 B remediation tracker link (GUI, key mode)", () => {
+  const NPM = { lodash: {}, minimist: {}, express: {} };
+  const files = (lodash: string): Record<string, string> => {
+    const deps = { lodash, minimist: "1.2.0", express: "4.0.0" };
+    return { "package.json": JSON.stringify({ name: "a", dependencies: deps }), "package-lock.json": lockOf(deps) };
+  };
+  const pkg = (name: string, version: string, cves: string[], ghsa: string[] = []) => ({
+    purl: `pkg:npm/${name}@${version}`, ecosystem: "npm", name, version,
+    vulnerabilities: cves.map((c) => ({ id: `GHSA-${c.slice(-4)}-aaaa-bbbb`, aliases: [c], cve_id: c, severity: "HIGH", cvss: { score: 7.5, version: "3.1" }, fixed_versions: ["99.0.0"] })),
+    unknown_vulnerabilities: ghsa.map((id) => ({ id, severity: "UNKNOWN", fixed_versions: ["99.0.0"] })),
+  });
+  const scanWith = (dir: string, appDir: string, packages: unknown[]) =>
+    scanDefault(dir, {
+      appDir, now,
+      fetch: mockNet({
+        npm: NPM,
+        custom: (u, init) =>
+          u.pathname.startsWith("/api/v1/scan/jobs")
+            ? init?.method === "POST" ? json({ job_id: "j", status: "queued" }, 202) : json({ job_id: "j", status: "completed", result: { summary: {}, packages } })
+            : undefined,
+      }).fetch,
+    });
+  /** Fake remediation tracker: CVE → [status, note]. Records list calls and PUT bodies. */
+  function tracker(items: Record<string, [string, string | null]>) {
+    const s = { lists: 0, puts: [] as { url: string; body: Record<string, unknown> }[] };
+    const net = mockNet({
+      custom: (u, init) => {
+        if (u.pathname === "/api/v1/remediations") {
+          s.lists++;
+          const data = u.searchParams.getAll("cve_id").filter((c) => items[c]).map((c) => ({ cve_id: c, status: items[c]![0], note: items[c]![1] }));
+          return json({ success: true, data, meta: { total: data.length } });
+        }
+        if (u.pathname.startsWith("/api/v1/remediations/")) {
+          s.puts.push({ url: u.pathname, body: JSON.parse(init!.body as string) });
+          return json({ success: true });
+        }
+        return undefined;
+      },
+    });
+    return Object.assign(s, net);
+  }
+  const idOf = async (dir: string, appDir: string, name: string): Promise<string> => (await readLastScan(dir, appDir))!.findings.find((f) => f.package === name)!.id;
+
+  it("B1: a finding whose CVEs are all done is set apart; partly done and CVE-less (GHSA-only) ones stay to fix; one list call", async () => {
+    const appDir = await consentedAppDir({ vulnintel: false }, KEY);
+    const dir = project(files("4.17.20"));
+    const r = await scanWith(dir, appDir, [
+      pkg("lodash", "4.17.20", ["CVE-2021-1001", "CVE-2021-1002"]),
+      pkg("minimist", "1.2.0", ["CVE-2021-1003"]),
+      pkg("express", "4.0.0", [], ["GHSA-expr-0000-0000"]),
+    ]);
+    expect(byRule(r, "vulnerable-deps").map((f) => f.package).sort()).toEqual(["express", "lodash", "minimist"]);
+    const t = tracker({ "CVE-2021-1001": ["done", "checkback: lodash@4.17.20"], "CVE-2021-1002": ["open", null], "CVE-2021-1003": ["done", "mine"] });
+    const { routes } = createRoutes({ cwd: dir, appDir, fetch: t.fetch });
+    const res = (await routes["GET /api/track"]!({})) as { status: Record<string, string>; done: string[]; completable: unknown[] };
+    expect(res.done).toEqual([await idOf(dir, appDir, "minimist")]);
+    expect(res.done).not.toContain(await idOf(dir, appDir, "lodash")); // one CVE still open
+    expect(res.done).not.toContain(await idOf(dir, appDir, "express")); // no CVE: never "all done"
+    expect(res.status).toEqual({ "CVE-2021-1001": "done", "CVE-2021-1002": "open", "CVE-2021-1003": "done" });
+    expect(res.completable).toEqual([]); // first scan: no previous one
+    expect(t.lists).toBe(1);
+    expect(t.puts).toEqual([]);
+  });
+
+  it("B2: only CVEs gone since the previous scan, open/in_progress and added by checkback; PUT carries status only; offline scan offers none", async () => {
+    const appDir = await consentedAppDir({ vulnintel: false }, KEY);
+    const dir = project(files("4.17.20"));
+    const gone = ["CVE-2021-2001", "CVE-2021-2002", "CVE-2021-2003", "CVE-2021-2004", "CVE-2021-2005"];
+    await scanWith(dir, appDir, [pkg("lodash", "4.17.20", gone), pkg("minimist", "1.2.0", ["CVE-2021-2006"])]);
+    project(files("4.17.21"), dir);
+    await scanWith(dir, appDir, [pkg("lodash", "4.17.21", []), pkg("minimist", "1.2.0", ["CVE-2021-2006"])]);
+    const t = tracker({
+      "CVE-2021-2001": ["open", "checkback: lodash@4.17.20"],
+      "CVE-2021-2002": ["in_progress", "checkback: lodash@4.17.20 (waiting on deploy)"],
+      "CVE-2021-2003": ["wont_fix", "checkback: lodash@4.17.20"],
+      "CVE-2021-2004": ["open", "registered by hand"],
+      "CVE-2021-2005": ["done", "checkback: lodash@4.17.20"],
+      "CVE-2021-2006": ["open", "checkback: minimist@1.2.0"], // still found: not a candidate
+    });
+    const { routes } = createRoutes({ cwd: dir, appDir, fetch: t.fetch });
+    const res = (await routes["GET /api/track"]!({})) as { completable: { cve: string; pkg: string; version: string }[] };
+    expect(res.completable).toEqual([
+      { cve: "CVE-2021-2001", pkg: "lodash", version: "4.17.20" },
+      { cve: "CVE-2021-2002", pkg: "lodash", version: "4.17.20" },
+    ]);
+    expect(t.lists).toBe(1);
+    expect(t.puts).toEqual([]); // nothing is sent until [Mark done]
+    const done = await routes["POST /api/track/done"]!({ cves: [...gone, "CVE-2021-2006", "CVE-1999-0001"] });
+    expect(done).toEqual({ done: 2 });
+    expect(t.puts).toEqual([
+      { url: "/api/v1/remediations/CVE-2021-2001", body: { status: "done" } },
+      { url: "/api/v1/remediations/CVE-2021-2002", body: { status: "done" } },
+    ]);
+    expect(t.puts.every((p) => !("note" in p.body))).toBe(true); // the user's note stays
+    // an offline rescan finds no vulnerable deps: that is not "fixed"
+    await scanDefault(dir, { appDir, now, fetch: mockNet({ offline: true }).fetch });
+    expect(await goneCves(dir, appDir)).toEqual([]);
+  });
+
+  it("B: no key or no consent → no request at all", async () => {
+    const appDir = await consentedAppDir({ vulnintel: false }, KEY);
+    const dir = project(files("4.17.20"));
+    await scanWith(dir, appDir, [pkg("lodash", "4.17.20", ["CVE-2021-3001"])]);
+    project(files("4.17.21"), dir);
+    await scanWith(dir, appDir, [pkg("lodash", "4.17.21", [])]);
+    const t = tracker({ "CVE-2021-3001": ["open", "checkback: lodash@4.17.20"] });
+    const { routes } = createRoutes({ cwd: dir, appDir, fetch: t.fetch });
+    await updateConfig(appDir, { api_key: undefined });
+    await expect(routes["GET /api/track"]!({})).rejects.toMatchObject({ status: 400, code: "no_key" });
+    await expect(routes["POST /api/track/done"]!({ cves: ["CVE-2021-3001"] })).rejects.toMatchObject({ code: "no_key" });
+    await updateConfig(appDir, { api_key: KEY, consent: undefined });
+    await expect(routes["GET /api/track"]!({})).rejects.toMatchObject({ code: "no_consent" });
+    await expect(routes["POST /api/track/done"]!({ cves: ["CVE-2021-3001"] })).rejects.toMatchObject({ code: "no_consent" });
+    expect(t.calls).toEqual([]);
+  });
 });

@@ -3,7 +3,8 @@ import { readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { addIgnore, clearSnapshot, loadDefaultTemplate, scan, type Finding, type ScanResult } from "../src/index.js";
-import { lastScanFile, lockLooksHandEdited, recordFixRequest, snapshotFile, type LockState } from "../src/recheck.js";
+import { createRoutes } from "../src/gui/routes.js";
+import { HISTORY_MAX, historyFile, lastScanFile, lockLooksHandEdited, readHistory, recordFixRequest, snapshotFile, type LockState } from "../src/recheck.js";
 import { byRule, consentedAppDir, git, gitRepo, K, mockNet, project, tempDir } from "./helpers.js";
 
 const NOW = Date.UTC(2026, 10, 4);
@@ -486,3 +487,137 @@ describe("value hashes are per-install HMAC (no plain sha256 anywhere)", () => {
   });
 });
 
+describe("QA-003 scan history", () => {
+  const files = (keys: string[]): Record<string, string> => ({
+    "src/a.ts": `export const a = "${keys[0]}";\n`,
+    "src/b.ts": `export const b = "${keys[1]}";\n`,
+    "src/c.ts": `export const c = "${keys[2]}";\n`,
+  });
+
+  it("keeps the first scan pinned and at most HISTORY_MAX scans; stores no values or masked values", async () => {
+    const appDir = tempDir();
+    const keys = [K.github(), K.github(), K.openai()];
+    const dir = project(files(keys));
+    const at = (i: number): string => new Date(NOW + i * 60_000).toISOString();
+    for (let i = 1; i <= 21; i++) {
+      if (i === 2) writeFileSync(join(dir, "src/a.ts"), "export const a = process.env.A;\n"); // fixed after the first scan
+      await scan(dir, await loadDefaultTemplate(), { appDir, now: () => NOW + i * 60_000 });
+    }
+    const list = await readHistory(dir, appDir);
+    expect(HISTORY_MAX).toBe(20);
+    expect(list.length).toBe(HISTORY_MAX);
+    expect(list[0]!.scan_at).toBe(at(1)); // first scan pinned
+    expect(list[1]!.scan_at).toBe(at(3)); // the oldest after it dropped off
+    expect(list.at(-1)!.scan_at).toBe(at(21));
+    expect(list.map((e) => e.seq)).toEqual([1, ...Array.from({ length: 19 }, (_, i) => i + 3)]); // numbers stay with their scan
+    const rows = ((await createRoutes({ cwd: dir, appDir }).routes["POST /api/history"]!({})) as Record<string, any>).scans;
+    expect([rows[1].seq, rows[1].prev_seq]).toEqual([3, 1]); // compared across the dropped scan 2
+    expect([rows[2].seq, rows[2].prev_seq]).toEqual([4, 3]);
+    expect(list[0]!.findings.filter((f) => f.secret_kind).length).toBe(3);
+    const text = readFileSync(await historyFile(appDir, dir), "utf8");
+    for (const k of keys) {
+      expect(text).not.toContain(k);
+      expect(text).not.toContain(k.slice(0, 12));
+    }
+    expect(text).not.toContain("••••"); // no masked values either
+    expect(text).not.toContain("masked_match");
+  }, 60_000);
+
+  it("GUI history: first scan is the default baseline; another scan can be chosen; per-scan deltas; clear", async () => {
+    const appDir = tempDir();
+    const keys = [K.github(), K.github(), K.openai()];
+    const dir = project(files(keys));
+    const { routes } = createRoutes({ cwd: dir, appDir });
+    const hist = (base?: string) => routes["POST /api/history"]!({ base }) as Promise<Record<string, any>>;
+    expect(await hist()).toEqual({ scans: [], compare: null });
+    await rescan(dir, appDir);
+    expect((await hist()).compare).toBeNull(); // one scan: nothing to compare
+    writeFileSync(join(dir, "src/a.ts"), "export const a = process.env.A;\n");
+    await rescan(dir, appDir);
+    writeFileSync(join(dir, "src/d.ts"), `export const d = "${K.github()}";\n`);
+    await rescan(dir, appDir);
+    const h = await hist();
+    expect(h.scans.map((s: any) => [s.total, s.resolved, s.new])).toEqual([
+      [3, undefined, undefined],
+      [2, 1, 0],
+      [3, 0, 1],
+    ]);
+    expect(h.compare.base_id).toBe(h.scans[0].scan_id);
+    const by = (c: any, st: string): string[] => c.items.filter((x: any) => x.status === st).map((x: any) => x.location.file).sort();
+    expect(by(h.compare, "resolved")).toEqual(["src/a.ts"]);
+    expect(by(h.compare, "remaining")).toEqual(["src/b.ts", "src/c.ts"]);
+    expect(by(h.compare, "new")).toEqual(["src/d.ts"]);
+    const second = (await hist(h.scans[1].scan_id)).compare;
+    expect(by(second, "resolved")).toEqual([]);
+    expect(by(second, "new")).toEqual(["src/d.ts"]);
+    expect((await hist(h.scans[2].scan_id)).compare.base_id).toBe(h.scans[0].scan_id); // the latest is no baseline
+    const text = JSON.stringify(h);
+    for (const k of keys) expect(text).not.toContain(k);
+    expect(text).not.toContain("value_hash");
+    // L2: ignoring an item later keeps each scan's recorded count; the comparison leaves it out and says so
+    const c = (await readHistory(dir, appDir)).at(-1)!.findings.find((f) => f.location?.file === "src/c.ts")!;
+    await addIgnore(dir, c.id, "test fixture", appDir);
+    const after = await hist();
+    expect(after.scans.map((s: any) => s.total)).toEqual([3, 2, 3]);
+    expect(by(after.compare, "remaining")).toEqual(["src/b.ts"]);
+    expect(after.compare.ignored).toBe(1);
+    expect(h.compare.ignored).toBe(0);
+    await routes["POST /api/history/clear"]!({});
+    expect(await readHistory(dir, appDir)).toEqual([]);
+  });
+});
+
+describe("QA-003 history compares like the result screen", () => {
+  const LODASH = { id: "GHSA-35jh-r3h4-6jhm", database_specific: { severity: "HIGH" }, affected: [{ package: { ecosystem: "npm", name: "lodash" }, ranges: [{ events: [{ introduced: "0" }, { fixed: "4.17.21" }] }] }] };
+  const net = mockNet({ osv: { "npm:lodash@4.17.20": ["GHSA-35jh-r3h4-6jhm"] }, vulns: { "GHSA-35jh-r3h4-6jhm": LODASH } });
+  const lockText = (v: string, integrity: string, url: string): string =>
+    JSON.stringify({
+      name: "a",
+      lockfileVersion: 3,
+      packages: {
+        "": { name: "a", dependencies: { lodash: "^4.17.20", other: "1.0.0" } },
+        "node_modules/lodash": { version: v, resolved: url, integrity },
+        "node_modules/other": { version: "1.0.0", resolved: "https://registry.npmjs.org/other/-/other-1.0.0.tgz", integrity: "sha512-other" },
+      },
+    });
+  const pkgJson = JSON.stringify({ name: "a", dependencies: { lodash: "^4.17.20", other: "1.0.0" } });
+  const items = (c: any): [string, string][] => c.items.filter((x: any) => x.package).map((x: any) => [x.package, x.status]);
+
+  it("M1: a lock edited by hand (version changed, integrity kept) is 'check (lock)' against the first scan, not resolved; history keeps only flagged packages' lock data", async () => {
+    const appDir = await consentedAppDir({ vulnintel: false, registry: false });
+    const dir = project({ "package.json": pkgJson, "package-lock.json": lockText("4.17.20", "sha512-OLD", "https://registry.npmjs.org/lodash/-/lodash-4.17.20.tgz") });
+    const hist = (base?: string) => createRoutes({ cwd: dir, appDir }).routes["POST /api/history"]!({ base }) as Promise<Record<string, any>>;
+    await rescan(dir, appDir, { fetch: net.fetch });
+    await rescan(dir, appDir, { fetch: net.fetch }); // unchanged
+    project({ "package-lock.json": lockText("4.17.21", "sha512-OLD", "https://registry.npmjs.org/lodash/-/lodash-4.17.20.tgz") }, dir);
+    expect(byRule(await rescan(dir, appDir, { fetch: net.fetch }), "vulnerable-deps")).toMatchObject([{ recheck: "lock_mismatch" }]);
+    const h = await hist();
+    expect(items(h.compare)).toEqual([["lodash", "lock_mismatch"]]);
+    expect(h.scans[2].resolved).toBe(0);
+    expect(Object.keys((await readHistory(dir, appDir))[0]!.locks[0]!.entries)).toEqual(["lodash"]);
+    // a real upgrade resolves it, against the first scan too
+    project({ "package-lock.json": lockText("4.17.21", "sha512-NEW", "https://registry.npmjs.org/lodash/-/lodash-4.17.21.tgz") }, dir);
+    await rescan(dir, appDir, { fetch: net.fetch });
+    expect(items((await hist()).compare)).toEqual([["lodash", "resolved"]]);
+  });
+
+  it("M2: a scan whose dependency check did not run is marked partial, counts nothing as resolved, and either side of a compare says so", async () => {
+    const appDir = await consentedAppDir({ vulnintel: false, registry: false });
+    const dir = project({ "package.json": pkgJson, "package-lock.json": lockText("4.17.20", "sha512-OLD", "https://registry.npmjs.org/lodash/-/lodash-4.17.20.tgz") });
+    const hist = (base?: string) => createRoutes({ cwd: dir, appDir }).routes["POST /api/history"]!({ base }) as Promise<Record<string, any>>;
+    await rescan(dir, appDir, { fetch: net.fetch });
+    await rescan(dir, appDir, { fetch: mockNet({ offline: true }).fetch });
+    let h = await hist();
+    const deps = (p: any[]): any[] => p.filter((x) => x.rule_id === "vulnerable-deps");
+    expect(deps(h.scans[0].partial)).toEqual([]);
+    expect(deps(h.scans[1].partial)).toEqual([expect.objectContaining({ reason: "offline" })]);
+    expect([h.scans[1].resolved, h.scans[1].not_checked]).toEqual([0, 1]);
+    expect(deps(h.compare.latest_partial).length).toBe(1);
+    expect(items(h.compare)).toEqual([["lodash", "not_checked"]]);
+    await rescan(dir, appDir, { fetch: net.fetch });
+    h = await hist(h.scans[1].scan_id); // the offline scan as the baseline
+    expect(deps(h.compare.base_partial).length).toBe(1);
+    expect(deps(h.compare.latest_partial)).toEqual([]);
+    expect(items(h.compare)).toEqual([["lodash", "not_checked"]]); // not "new": the baseline never checked it
+  });
+});

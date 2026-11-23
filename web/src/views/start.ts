@@ -114,7 +114,7 @@ export function progressView(): HTMLElement {
       }
       S.result = await api<ScanView>("GET", "/api/result");
       S.selected.clear();
-      S.tracked = null;
+      S.tracker = null;
       go("result");
     } catch (e) {
       report(e);

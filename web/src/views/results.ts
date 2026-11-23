@@ -6,8 +6,8 @@ import { extLink, h, modal, replace } from "../dom.js";
 import { emptyKind } from "../empty.js";
 import { t } from "../i18n.js";
 import { isProvisional, pickBySeverity } from "../pick.js";
-import { go, report, S, type GFinding } from "../state.js";
-import { aiCheckDialog, fixDialog, ignoreDialog, pasteToAi, trackDialog, watchDialog } from "./dialogs.js";
+import { go, report, S, type GFinding, type Tracker } from "../state.js";
+import { aiCheckDialog, completeBox, fixDialog, ignoreDialog, pasteToAi, trackDialog, watchDialog } from "./dialogs.js";
 import { loc, recheckSummary, requestedHead, requestedOf } from "./recheck.js";
 import { startScan } from "./start.js";
 
@@ -24,6 +24,7 @@ function badges(f: GFinding): HTMLElement {
     { class: "badges" },
     h("span", { class: `sev sev-${f.severity}` }, t().result.sev[f.severity]),
     f.recheck && !(f.confidence === "info" && f.recheck === "remaining") ? h("span", { class: `badge recheck-${f.recheck}` }, c.recheck[f.recheck] ?? f.recheck) : null,
+    S.tracker?.done.has(f.id) ? h("span", { class: "badge recheck-resolved" }, c.trackerDone) : null,
     f.kev ? h("span", { class: "badge kev" }, c.kev) : null,
     f.vpi_level ? h("span", { class: `badge vpi vpi-${f.vpi_level}` }, c.vpi(f.vpi_level)) : null,
     isProvisional(f) ? h("span", { class: "badge" }, c.provisional) : null,
@@ -56,7 +57,7 @@ function card(f: GFinding, rerender: () => void): HTMLElement {
     S.st!.key !== "none" && f.rule_id === "vulnerable-deps"
       ? ids.length === 0
         ? h("span", { class: "muted small" }, c.ghsaOnly)
-        : ids.every((x) => S.tracked?.get(x))
+        : ids.every((x) => S.tracker?.status.has(x))
           ? h("span", { class: "muted small" }, c.tracked)
           : h("button", { class: "btn", type: "button", onclick: () => trackDialog(ids, `checkback: ${f.package}@${f.version ?? ""}`, rerender) }, c.track)
       : null;
@@ -147,11 +148,13 @@ export function resultView(): HTMLElement {
   const root = h("section", { class: "result" });
   const rerender = (): void => go("result");
   const asked = requestedOf(r.compare, r.findings);
-  const rest = r.findings.filter((f) => !asked.includes(f));
+  // B1: every CVE done in the tracker → out of "things to fix", shown in its own group (not hidden).
+  const done = r.findings.filter((f) => !asked.includes(f) && S.tracker?.done.has(f.id));
+  const rest = r.findings.filter((f) => !asked.includes(f) && !done.includes(f));
   const fix = rest.filter((f) => f.confidence === "confirmed");
   const review = rest.filter((f) => f.confidence === "review");
   const info = rest.filter((f) => f.confidence === "info");
-  const allFix = r.findings.filter((f) => f.confidence === "confirmed");
+  const allFix = r.findings.filter((f) => f.confidence === "confirmed" && !done.includes(f));
   const count = (s: string): number => allFix.filter((f) => f.severity === s).length;
   boxes.clear();
 
@@ -190,11 +193,12 @@ export function resultView(): HTMLElement {
         ].filter((x) => x !== null)
       : null;
 
-  if (S.st!.key !== "none" && S.tracked === null && r.findings.some((f) => f.rule_id === "vulnerable-deps" && cves(f).length)) {
-    S.tracked = new Map();
-    api<{ rows: { cve: string; registered: boolean }[] }>("GET", "/api/track")
+  // Key mode after consent only (AC34). Any failure leaves the tracker parts out, quietly.
+  if (S.st!.key !== "none" && S.st!.consent && S.tracker === null) {
+    S.tracker = { status: new Map(), done: new Set(), completable: [] };
+    api<{ status: Record<string, string>; done: string[]; completable: Tracker["completable"] }>("GET", "/api/track")
       .then((x) => {
-        S.tracked = new Map(x.rows.map((row) => [row.cve, row.registered]));
+        S.tracker = { status: new Map(Object.entries(x.status)), done: new Set(x.done), completable: x.completable };
         if (S.view === "result") rerender();
       })
       .catch(() => {});
@@ -231,6 +235,7 @@ export function resultView(): HTMLElement {
     ),
     ...r.notices.map((x) => h("p", { class: "note" }, x)),
   );
+  if (S.tracker?.completable.length) root.append(completeBox(S.tracker.completable, rerender));
 
   const empty = emptyState();
   if (empty) root.append(empty);
@@ -240,6 +245,7 @@ export function resultView(): HTMLElement {
     if (rest.length) root.append(h("h2", { class: "sec others" }, t().recheck.others));
   }
   if (fix.length) root.append(h("h2", { class: "sec" }, tr.secFix), h("div", { class: "cards" }, fix.map((f) => card(f, rerender))));
+  if (done.length) root.append(h("h2", { class: "sec" }, tr.secTrackerDone(done.length)), h("p", { class: "muted small" }, tr.secTrackerDoneHint), h("div", { class: "cards" }, done.map((f) => card(f, rerender))));
   if (review.length) root.append(h("h2", { class: "sec" }, tr.secReview), h("p", { class: "muted small" }, tr.secReviewHint), h("div", { class: "cards" }, review.map((f) => card(f, rerender))));
   if (info.length) root.append(h("details", { class: "fold" }, h("summary", {}, tr.secInfo(info.length)), h("div", { class: "cards" }, info.map((f) => card(f, rerender)))));
   if (r.passed.length) root.append(h("details", { class: "fold" }, h("summary", {}, tr.passed(r.passed.length)), h("ul", { class: "plain" }, r.passed.map((p) => h("li", {}, p.name)))));

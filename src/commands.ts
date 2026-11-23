@@ -12,11 +12,11 @@ import type { ConsentIO } from "./consent.js";
 import { lookupScope, readInventory } from "./deps/inventory.js";
 import { addIgnore, listIgnores, removeIgnore } from "./ignores.js";
 import { ViBudget } from "./net/budget.js";
-import { defaultHttp, type Fetch } from "./net/http.js";
-import { createSubscription, listRemediations, putRemediation, type KeyError } from "./net/vulnintel.js";
+import { defaultHttp, type Fetch, type Http } from "./net/http.js";
+import { createSubscription, listRemediations, markRemediationDone, putRemediation, TRACK_NOTE_PREFIX, type KeyError, type KeyResult } from "./net/vulnintel.js";
 import { findingDescription } from "./builtins/text.js";
 import { CONSENT_HOWTO, DISCLAIMER, KEY_NOTICE, scanNotices } from "./notice.js";
-import { readLastScan } from "./recheck.js";
+import { readHistory, readLastScan } from "./recheck.js";
 import type { Finding, Lang, LocalizedText, RecheckStatus, ScanResult, Severity, Template } from "./types.js";
 
 export type TtyIO = ConsentIO;
@@ -256,7 +256,7 @@ async function track(io: TtyIO, o: CommandOptions, ask: (q: string) => Promise<s
     );
     return 1;
   }
-  const registered = reg.set;
+  const registered = reg.map;
   const already = L(l, { ko: " · 등록됨", en: " · registered", zh: " · 已加入" });
   io.output.write(`${unique.map((u, i) => `${String(i + 1).padStart(3)}) ${u.cve} · ${u.pkg}@${u.version}${registered.has(u.cve) ? already : ""}`).join("\n")}\n`);
   const answer = await ask(
@@ -280,42 +280,92 @@ export interface TrackRow {
   version: string;
 }
 
-/** CVE rows (GHSA-only items excluded) from the latest scan's vulnerable dependencies, one per CVE. */
-export async function trackRows(cwd: string, appDir: string): Promise<TrackRow[]> {
-  const rows = ((await readLastScan(cwd, appDir))?.findings ?? [])
-    .filter((f) => f.rule_id === "vulnerable-deps" && f.package && f.version)
-    .flatMap((f) => (f.vuln_ids ?? []).filter((v) => /^CVE-\d{4}-\d{4,}$/.test(v)).map((cve) => ({ cve, pkg: f.package!, version: f.version! })));
+const CVE_RE = /^CVE-\d{4}-\d{4,}$/;
+type VulnItem = Pick<Finding, "rule_id" | "package" | "version" | "vuln_ids">;
+/** The tracker is keyed by CVE only: GHSA / MAL- ids are left out. */
+const cvesOf = (f: VulnItem): string[] => (f.rule_id === "vulnerable-deps" ? (f.vuln_ids ?? []).filter((v) => CVE_RE.test(v)) : []);
+
+function cveRows(findings: VulnItem[]): TrackRow[] {
+  const rows = findings.filter((f) => f.package && f.version).flatMap((f) => cvesOf(f).map((cve) => ({ cve, pkg: f.package!, version: f.version! })));
   return [...new Map(rows.map((r) => [r.cve, r])).values()];
 }
 
-/** CVEs already in the remediation tracker: one list call per 100 (§8-3-4). */
+/** CVE rows (GHSA-only items excluded) from the latest scan's vulnerable dependencies, one per CVE. */
+export async function trackRows(cwd: string, appDir: string): Promise<TrackRow[]> {
+  return cveRows((await readLastScan(cwd, appDir))?.findings ?? []);
+}
+
+/**
+ * CVEs of this project's previous scan that the latest scan no longer finds (history, QA-003 B2).
+ * Empty unless the latest scan fully ran the dependency check: an offline or partial scan finds
+ * nothing and must not read as "fixed". Ignored items are not "fixed" either.
+ */
+export async function goneCves(cwd: string, appDir: string): Promise<TrackRow[]> {
+  const [prev, cur] = (await readHistory(cwd, appDir)).slice(-2);
+  const ran = cur?.checked.find((c) => c.rule_id === "vulnerable-deps");
+  if (!prev || !cur || !ran?.ran || ran.reason) return [];
+  const ignored = new Set((await listIgnores(cwd, appDir)).map((e) => e.id));
+  const now = new Set(cveRows(cur.findings).map((r) => r.cve));
+  return cveRows(prev.findings.filter((f) => !ignored.has(f.id))).filter((r) => !now.has(r.cve));
+}
+
+export interface TrackerItem {
+  status: string;
+  note: string | null;
+}
+
+const OPEN_STATES = new Set(["open", "in_progress"]);
+
+/** B2: gone CVEs that checkback registered and nobody has closed. done / wont_fix / not_applicable and other people's items stay as they are. */
+export const completable = (gone: TrackRow[], tracker: Map<string, TrackerItem>): TrackRow[] =>
+  gone.filter((r) => {
+    const it = tracker.get(r.cve);
+    return !!it && OPEN_STATES.has(it.status) && (it.note ?? "").startsWith(TRACK_NOTE_PREFIX);
+  });
+
+/** B1: findings whose CVEs are all `done` in the tracker. A finding without any CVE never counts. */
+export const trackerDoneIds = (findings: (VulnItem & { id: string })[], tracker: Map<string, TrackerItem>): string[] =>
+  findings.filter((f) => cvesOf(f).length > 0 && cvesOf(f).every((c) => tracker.get(c)?.status === "done")).map((f) => f.id);
+
+/** Tracker items for these CVEs: one list call per 100 (§8-3-4). */
 export async function registeredCves(
   appDir: string, key: string, cves: string[], fetch?: Fetch,
-): Promise<{ ok: true; set: Set<string> } | { ok: false; kind: KeyError["kind"] }> {
+): Promise<{ ok: true; map: Map<string, TrackerItem> } | { ok: false; kind: KeyError["kind"] }> {
   const http = defaultHttp(fetch);
   const budget = new ViBudget(appDir, { keyMode: true });
-  const set = new Set<string>();
+  const map = new Map<string, TrackerItem>();
   for (let i = 0; i < cves.length; i += 100) {
     const r = await listRemediations(http, budget, key, cves.slice(i, i + 100));
     if (!r.ok) return { ok: false, kind: r.error.kind };
     const data = (r.value as { data?: unknown }).data;
-    for (const it of Array.isArray(data) ? data : []) if (typeof it?.cve_id === "string") set.add(it.cve_id.toUpperCase());
+    for (const it of Array.isArray(data) ? data : []) {
+      if (typeof it?.cve_id === "string") map.set(it.cve_id.toUpperCase(), { status: String(it.status ?? ""), note: typeof it.note === "string" ? it.note : null });
+    }
   }
-  return { ok: true, set };
+  return { ok: true, map };
 }
 
-/** Register rows (callers drop already-registered ones — never overwrite); stops at the first error. */
-export async function registerCves(appDir: string, key: string, rows: TrackRow[], fetch?: Fetch): Promise<{ ok: number; error?: { cve: string; kind: KeyError["kind"] } }> {
+type PutResult = { ok: number; error?: { cve: string; kind: KeyError["kind"] } };
+
+async function putEach(appDir: string, rows: TrackRow[], fetch: Fetch | undefined, put: (http: Http, budget: ViBudget, r: TrackRow) => Promise<KeyResult<unknown>>): Promise<PutResult> {
   const http = defaultHttp(fetch);
   const budget = new ViBudget(appDir, { keyMode: true });
   let ok = 0;
   for (const u of rows) {
-    const r = await putRemediation(http, budget, key, u.cve, u.pkg, u.version);
+    const r = await put(http, budget, u);
     if (!r.ok) return { ok, error: { cve: u.cve, kind: r.error.kind } };
     ok++;
   }
   return { ok };
 }
+
+/** Register rows (callers drop already-registered ones — never overwrite); stops at the first error. */
+export const registerCves = (appDir: string, key: string, rows: TrackRow[], fetch?: Fetch): Promise<PutResult> =>
+  putEach(appDir, rows, fetch, (http, budget, u) => putRemediation(http, budget, key, u.cve, u.pkg, u.version));
+
+/** Mark rows done (callers pass `completable` ones only); stops at the first error. */
+export const completeCves = (appDir: string, key: string, rows: TrackRow[], fetch?: Fetch): Promise<PutResult> =>
+  putEach(appDir, rows, fetch, (http, budget, u) => markRemediationDone(http, budget, key, u.cve));
 
 /** `checkback ignore` / `checkback ignore --remove`: the local ignore list (§5), person only. */
 export async function ignoreCommand(io: TtyIO, o: CommandOptions & { remove?: boolean }): Promise<number> {

@@ -5,6 +5,7 @@ import { api, initSession } from "./api.js";
 import { h, replace } from "./dom.js";
 import { LANG_NAMES, t, type UiLang } from "./i18n.js";
 import { changeLang, go, onRender, refreshState, report, S, type View } from "./state.js";
+import { historyView } from "./views/history.js";
 import { resultView } from "./views/results.js";
 import { sbomView, settingsView } from "./views/settings.js";
 import { consentView, progressView, startView } from "./views/start.js";
@@ -26,6 +27,7 @@ function header(): HTMLElement {
       "nav",
       { "aria-label": t().appName },
       tab(S.result && S.view !== "start" ? "result" : "start", n.scan, scanActive),
+      tab("history", n.history, S.view === "history"),
       tab("templates", n.templates, S.view === "templates"),
       tab("sbom", n.sbom, S.view === "sbom"),
       tab("settings", n.settings, S.view === "settings"),
@@ -52,6 +54,7 @@ const VIEWS: Record<View, () => HTMLElement> = {
   start: startView,
   progress: progressView,
   result: () => (S.result ? resultView() : startView()),
+  history: historyView,
   templates: templatesView,
   sbom: sbomView,
   settings: settingsView,

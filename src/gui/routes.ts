@@ -7,7 +7,7 @@ import { realpath } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { apiKeyOf, CONSENT_VERSION, hasConsent, projectKey, readConfig, readJson, updateConfig, writeJson, type LocalConfig } from "../appdata.js";
 import { BUILTIN_NAMES, findingDescription, KIND_TEXT } from "../builtins/text.js";
-import { registerCves, registeredCves, subscribePackages, trackRows, watchCandidates } from "../commands.js";
+import { completable, completeCves, goneCves, registerCves, registeredCves, subscribePackages, trackerDoneIds, trackRows, watchCandidates } from "../commands.js";
 import { readInventory } from "../deps/inventory.js";
 import { buildSbom, inSbom, purlOf } from "../deps/sbom.js";
 import { addIgnore, listIgnores, removeIgnore } from "../ignores.js";
@@ -16,7 +16,7 @@ import { defaultHttp, VERSION, type Fetch } from "../net/http.js";
 import { checkKey } from "../net/vulnintel.js";
 import { DATA_TABLE, DISCLAIMER, osLang, scanNotices } from "../notice.js";
 import { aiCheckPromptForProject, fixPromptText, MAX_BATCH, needsRevoke, PromptError } from "../prompts.js";
-import { clearSnapshot, readLastScan, recordFixRequest } from "../recheck.js";
+import { clearHistory, clearSnapshot, compareHistory, readHistory, readLastScan, recordFixRequest, type HistoryEntry } from "../recheck.js";
 import { scan, type ScanPhase } from "../scan.js";
 import {
   aiExternal, aiHash, deleteAiCheck, deleteTemplate, duplicateTemplate, exportTemplate, importTemplate, listTemplates,
@@ -46,6 +46,9 @@ const web = (lang: Lang, path: string): string => `https://www.vulnintelapp.com/
 const pick = (t: LocalizedText | undefined, lang: Lang): string | undefined => t?.[lang] ?? t?.en ?? t?.ko;
 const str = (v: unknown, max = 500): string => (typeof v === "string" ? v.slice(0, max) : "");
 const ids = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && /^[a-f0-9]{1,64}$/.test(x)) : []);
+/** Reasons that hold for every scan of a project (settings, repo shape): not "only part of it was checked". */
+const STEADY_REASONS = new Set(["disabled", "not_git_repo", "not_implemented", "shallow_clone"]);
+const cveList = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
 
 function ruleName(rule: Rule | undefined, f: { rule_id: string; kind?: string }, lang: Lang): string {
   const t = (rule && "name" in rule ? rule.name : undefined) ?? KIND_TEXT[`${f.rule_id}/${f.kind}`]?.title ?? BUILTIN_NAMES[f.rule_id];
@@ -338,22 +341,100 @@ export function createRoutes(ctx: GuiContext): { routes: Record<string, Route>; 
       if (picked.length === 0) throw fail(400, "no_selection");
       return subscribePackages(cwd, appDir, key, picked, ctx.fetch);
     },
+    // Tracker state of this scan's CVEs and of the CVEs the previous scan had (B1, B2): one list call per 100 for both.
     async "GET /api/track"() {
       const { key } = await keyCtx();
       const rows = await trackRows(cwd, appDir);
-      if (rows.length === 0) return { rows: [] };
-      const reg = await registeredCves(appDir, key, rows.map((r) => r.cve), ctx.fetch);
+      const gone = await goneCves(cwd, appDir);
+      const all = [...new Set([...rows, ...gone].map((r) => r.cve))];
+      if (all.length === 0) return { status: {}, done: [], completable: [] };
+      const reg = await registeredCves(appDir, key, all, ctx.fetch);
       if (!reg.ok) throw fail(502, "tracker_unavailable", reg.kind);
-      return { rows: rows.map((r) => ({ cve: r.cve, registered: reg.set.has(r.cve) })) };
+      return {
+        status: Object.fromEntries(rows.flatMap((r) => (reg.map.has(r.cve) ? [[r.cve, reg.map.get(r.cve)!.status]] : []))),
+        done: trackerDoneIds((await readLastScan(cwd, appDir))?.findings ?? [], reg.map),
+        completable: completable(gone, reg.map),
+      };
     },
     async "POST /api/track"(b) {
       const { key } = await keyCtx();
-      const want = new Set(Array.isArray(b.cves) ? b.cves.filter((x): x is string => typeof x === "string") : []);
+      const want = new Set(cveList(b.cves));
       const rows = (await trackRows(cwd, appDir)).filter((r) => want.has(r.cve));
       const reg = await registeredCves(appDir, key, rows.map((r) => r.cve), ctx.fetch);
       if (!reg.ok) throw fail(502, "tracker_unavailable", reg.kind);
-      const r = await registerCves(appDir, key, rows.filter((x) => !reg.set.has(x.cve)), ctx.fetch);
-      return { registered: r.ok + rows.filter((x) => reg.set.has(x.cve)).length, ...(r.error && { error: r.error.kind }) };
+      const r = await registerCves(appDir, key, rows.filter((x) => !reg.map.has(x.cve)), ctx.fetch);
+      return { registered: r.ok + rows.filter((x) => reg.map.has(x.cve)).length, ...(r.error && { error: r.error.kind }) };
+    },
+    // B2 [Mark done]: only CVEs that are still candidates now (re-read from the tracker) are sent.
+    async "POST /api/track/done"(b) {
+      const { key } = await keyCtx();
+      const want = new Set(cveList(b.cves));
+      const gone = (await goneCves(cwd, appDir)).filter((r) => want.has(r.cve));
+      if (gone.length === 0) throw fail(400, "no_selection");
+      const reg = await registeredCves(appDir, key, gone.map((r) => r.cve), ctx.fetch);
+      if (!reg.ok) throw fail(502, "tracker_unavailable", reg.kind);
+      const r = await completeCves(appDir, key, completable(gone, reg.map), ctx.fetch);
+      return { done: r.ok, ...(r.error && { error: r.error.kind }) };
+    },
+
+    // ---- scan history (QA-003): local only, value-free entries
+    async "POST /api/history"(b) {
+      const list = await readHistory(cwd, appDir);
+      const latest = list.at(-1);
+      if (!latest) return { scans: [], compare: null };
+      const ignored = new Set((await listIgnores(cwd, appDir)).map((e) => e.id));
+      const lang = langOf(await cfg());
+      const tpl = await tplOf(latest.template_id).catch(() => null);
+      const ruleOf = (id: string): Rule | undefined => tpl?.rules.find((y) => y.id === id);
+      const title = (x: { rule_id: string; kind?: string; title: string }): string => (ruleOf(x.rule_id) ? ruleName(ruleOf(x.rule_id), x, lang) : x.title);
+      const live = (f: { confidence: string }): boolean => f.confidence !== "info"; // as the recheck bar: info is not a thing to fix
+      const seqOf = (i: number): number => list[i]!.seq ?? i + 1;
+      // Rules this scan could not fully run (no consent, lookups off, offline, timeout): it saw only part of the project.
+      const partial = (s: HistoryEntry) =>
+        s.checked.filter((c) => (!c.ran || c.reason) && !STEADY_REASONS.has(c.reason ?? "")).map((c) => ({ rule_id: c.rule_id, name: ruleName(ruleOf(c.rule_id), c, lang), reason: c.reason ?? "disabled" }));
+      const scans = list.map((s, i) => {
+        const c = i > 0 ? compareHistory(list[i - 1]!, s, ignored) : null;
+        return {
+          scan_id: s.scan_id,
+          scan_at: s.scan_at,
+          seq: seqOf(i),
+          total: s.findings.filter(live).length, // as recorded at the time: a later ignore does not rewrite it
+          partial: partial(s),
+          ...(c && {
+            prev_seq: seqOf(i - 1),
+            resolved: c.compare.resolved.filter(live).length,
+            new: c.findings.filter((f) => live(f) && f.recheck === "new").length,
+            not_checked: c.findings.filter((f) => live(f) && f.recheck === "not_checked").length,
+          }),
+        };
+      });
+      const base = list.slice(0, -1).find((s) => s.scan_id === b.base) ?? list[0]!; // default: the first scan
+      if (base === latest) return { scans, compare: null };
+      const c = compareHistory(base, latest, ignored);
+      const item = (x: Pick<Finding, "id" | "rule_id" | "kind" | "title" | "confidence" | "location" | "package" | "version">, status: string, severity?: Severity) => ({
+        id: x.id, title: title(x), status, confidence: x.confidence, location: x.location,
+        ...(severity && { severity }), ...(x.package && { package: x.package }), ...(x.version && { version: x.version }),
+      });
+      return {
+        scans,
+        compare: {
+          base_id: base.scan_id,
+          base_at: base.scan_at,
+          latest_at: latest.scan_at,
+          base_partial: partial(base),
+          latest_partial: partial(latest),
+          ignored: new Set([...base.findings, ...latest.findings].filter((f) => live(f) && ignored.has(f.id)).map((f) => f.id)).size,
+          items: [
+            ...c.compare.resolved.filter(live).map((x) => item(x, "resolved")),
+            // A rule the baseline did not run gives its items no status: they could not be compared.
+            ...c.findings.filter(live).map((f) => item(f, f.recheck ?? "not_checked", f.severity)),
+          ],
+        },
+      };
+    },
+    async "POST /api/history/clear"() {
+      await clearHistory(cwd, appDir);
+      return {};
     },
 
     // ---- templates (S5)
